@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spotify-dl"
+version = "0.1.21"
+description = "Download Spotify tracks, albums, and playlists as tagged MP3 files."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "click>=8.1",
+  "mutagen>=1.47",
+  "python-dotenv>=1.0",
+  "requests>=2.31",
+  "spotipy>=2.23",
+  "yt-dlp[default]>=2026.3.17",
+  "yt-dlp-ejs>=0.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-cov>=5",
+  "pytest-mock>=3.14",
+  "responses>=0.25",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+
+[project.scripts]
+spotify-dl = "spotify_dl.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["spotify_dl*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
