@@ -51,6 +51,7 @@ def _load_config(**overrides):
 @click.option("--verbose", "-v", is_flag=True)
 @click.option("--concurrency", "-c", type=int)
 @click.option("--youtube-link", "youtube_link", default=None, help="Use this YouTube URL instead of searching.")
+@click.option("--make-playlist", is_flag=True, help="Create a local folder mirroring the Spotify playlist.")
 @click.pass_context
 def cli(ctx: click.Context, **kwargs) -> None:
     """Download Spotify tracks, albums, and playlists as tagged MP3 files."""
@@ -77,6 +78,10 @@ def _run_download(url: str, options: dict) -> None:
             raise click.ClickException("--youtube-link can only be used with a single Spotify track URL.")
         click.echo(f"\n  {source_type.title()}: {source_name}")
         click.echo(f"  Tracks: {len(tracks)}\n")
+        make_playlist = options.get("make_playlist", False)
+        playlist_dir = None
+        if make_playlist and source_type == "playlist":
+            playlist_dir = FileSystem(config.output_directory).get_playlist_directory(source_name)
         results = _process_tracks(
             config=config,
             source_type=source_type,
@@ -84,6 +89,7 @@ def _run_download(url: str, options: dict) -> None:
             options=options,
             cover_cache=spotify.cover_cache,
             youtube_link=youtube_link,
+            playlist_dir=playlist_dir,
         )
         done = sum(1 for result in results if result.status == "done")
         skipped = sum(1 for result in results if result.status == "skipped")
@@ -102,9 +108,10 @@ def _process_tracks(
     options: dict,
     cover_cache: CoverCache | None = None,
     youtube_link: str | None = None,
+    playlist_dir=None,
 ):
     if source_type != "playlist" or options["dry_run"] or len(tracks) <= 1:
-        pipeline = DownloadPipeline(config, cover_cache=cover_cache, verbose=options["verbose"])
+        pipeline = DownloadPipeline(config, cover_cache=cover_cache, verbose=options["verbose"], playlist_dir=playlist_dir)
         results = []
         for index, track in enumerate(tracks, start=1):
             result = pipeline.process_track(
@@ -124,7 +131,7 @@ def _process_tracks(
     executor = ThreadPoolExecutor(max_workers=workers)
     futures = {
         executor.submit(
-            DownloadPipeline(config, cover_cache=cover_cache, verbose=options["verbose"]).process_track,
+            DownloadPipeline(config, cover_cache=cover_cache, verbose=options["verbose"], playlist_dir=playlist_dir).process_track,
             track,
             skip_existing=options["skip_existing"],
             dry_run=False,
@@ -168,6 +175,7 @@ def _print_track_result(index: int, total: int, result) -> None:
 @click.option("--verbose", "-v", is_flag=True, default=None)
 @click.option("--concurrency", "-c", type=int)
 @click.option("--youtube-link", "youtube_link", default=None, help="Use this YouTube URL instead of searching.")
+@click.option("--make-playlist", is_flag=True, default=None, help="Create a local folder mirroring the Spotify playlist.")
 @click.pass_context
 def download(ctx: click.Context, url: str, **kwargs) -> None:
     parent = ctx.parent.params if ctx.parent else {}
@@ -176,6 +184,7 @@ def download(ctx: click.Context, url: str, **kwargs) -> None:
     options.setdefault("dry_run", False)
     options.setdefault("verbose", False)
     options.setdefault("youtube_link", None)
+    options.setdefault("make_playlist", False)
     _run_download(url, options)
 
 

@@ -23,10 +23,10 @@ class FileSystem:
         year = track.album_release_date[:4] if track.album_release_date else "Unknown"
         artist = sanitize_component(track.album_artist)
         album = sanitize_component(f"{track.album_name} ({year})")
-        return self.output_directory / artist / album
+        return self.output_directory / "Artists" / artist / album
 
     def get_playlist_directory(self, playlist_name: str) -> Path:
-        return self.output_directory / sanitize_component(f"{playlist_name} (playlist)")
+        return self.output_directory / sanitize_component(playlist_name)
 
     def get_track_filename(self, track: TrackMetadata) -> str:
         prefix = (

@@ -32,7 +32,7 @@ def test_sanitize_component():
 
 def test_track_path(tmp_path):
     fs = FileSystem(tmp_path)
-    assert fs.get_track_path(make_track()) == tmp_path / "Artist" / "Album (2020)" / "03 - A_B_ Song_.mp3"
+    assert fs.get_track_path(make_track()) == tmp_path / "Artists" / "Artist" / "Album (2020)" / "03 - A_B_ Song_.mp3"
 
 
 def test_multidisc_filename(tmp_path):
