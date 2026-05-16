@@ -14,6 +14,7 @@ def auth() -> None:
 
 @auth.command("login")
 def auth_login() -> None:
+    """Log in to your Spotify account."""
     try:
         manager = config_manager()
         click.echo(AuthManager(manager.load(), manager).login())
@@ -23,6 +24,7 @@ def auth_login() -> None:
 
 @auth.command("logout")
 def auth_logout() -> None:
+    """Log out of your Spotify account."""
     manager = config_manager()
     config = manager.load(require_credentials=False)
     AuthManager(config, manager).logout()
@@ -31,6 +33,7 @@ def auth_logout() -> None:
 
 @auth.command("status")
 def auth_status() -> None:
+    """Show your current Spotify authentication status."""
     try:
         config = config_manager().load(require_credentials=False)
         click.echo(f"Spotify API credentials: {'configured' if config.spotify_client_id else 'missing'}")

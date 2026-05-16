@@ -13,15 +13,16 @@ def config_cmd() -> None:
 
 
 @config_cmd.command("set")
-@click.option("--client-id")
-@click.option("--client-secret")
-@click.option("--output-dir")
-@click.option("--quality", type=click.Choice(["0", "128", "192", "320"]))
-@click.option("--youtube-cookies-from")
-@click.option("--youtube-cookie-file")
-@click.option("--auth-port", type=int)
-@click.option("--concurrency", type=int)
+@click.option("--client-id", help="Spotify API client ID.")
+@click.option("--client-secret", help="Spotify API client secret.")
+@click.option("--output-dir", help="Default output directory for downloads.")
+@click.option("--quality", type=click.Choice(["0", "128", "192", "320"]), help="Default audio quality.")
+@click.option("--youtube-cookies-from", help="Browser to extract YouTube cookies from.")
+@click.option("--youtube-cookie-file", help="Path to a cookies.txt file for YouTube.")
+@click.option("--auth-port", type=int, help="Port to use for the local authentication callback server.")
+@click.option("--concurrency", type=int, help="Maximum number of concurrent downloads.")
 def config_set(**kwargs) -> None:
+    """Set configuration values."""
     partial: dict[str, object] = {}
     spotify: dict[str, object] = {}
     output: dict[str, object] = {}
@@ -57,17 +58,20 @@ def config_set(**kwargs) -> None:
 
 @config_cmd.command("show")
 def config_show() -> None:
+    """Show the current configuration (with secrets masked)."""
     click.echo(json.dumps(config_manager().masked(), indent=2))
 
 
 @config_cmd.command("clear")
 def config_clear() -> None:
+    """Clear all configuration values."""
     config_manager().clear()
     click.echo("Configuration cleared.")
 
 
 @config_cmd.command("clear-cookies")
 def config_clear_cookies() -> None:
+    """Clear saved YouTube cookies."""
     config_manager().clear_cookies()
     click.echo("YouTube cookie configuration cleared.")
 

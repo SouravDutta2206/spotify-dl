@@ -9,6 +9,7 @@ from spotify_dl.spotify import SpotifyClient
 
 @click.command()
 def playlists() -> None:
+    """List your saved Spotify playlists."""
     try:
         config = load_config()
         spotify = SpotifyClient(config, config_manager())
