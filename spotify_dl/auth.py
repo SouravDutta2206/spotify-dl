@@ -25,31 +25,13 @@ class AuthManager:
         )
         token_info = oauth.get_access_token(as_dict=True, check_cache=False)
         expiry = datetime.fromtimestamp(token_info["expires_at"], tz=timezone.utc)
-        self.config_manager.save(
-            {
-                "spotify": {
-                    "user_auth": {
-                        "access_token": token_info["access_token"],
-                        "refresh_token": token_info.get("refresh_token"),
-                        "token_expiry": expiry.isoformat().replace("+00:00", "Z"),
-                        "scope": token_info.get("scope") or USER_SCOPES,
-                    }
-                }
-            }
+        self.config_manager.save_user_auth(
+            access_token=token_info["access_token"],
+            refresh_token=token_info.get("refresh_token"),
+            token_expiry=expiry,
+            scope=token_info.get("scope") or USER_SCOPES,
         )
         return "Logged in with Spotify user authentication."
 
     def logout(self) -> None:
-        self.config_manager.save(
-            {
-                "spotify": {
-                    "user_auth": {
-                        "access_token": None,
-                        "refresh_token": None,
-                        "token_expiry": None,
-                        "scope": None,
-                        "display_name": None,
-                    }
-                }
-            }
-        )
+        self.config_manager.clear_user_auth()

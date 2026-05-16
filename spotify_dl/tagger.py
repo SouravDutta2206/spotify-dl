@@ -3,9 +3,9 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-import requests
 from mutagen.id3 import APIC, TALB, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TSRC, ID3
 
+from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import TaggingError
 from spotify_dl.models import TrackMetadata
 from spotify_dl.source_cache import CoverCache
@@ -13,7 +13,7 @@ from spotify_dl.source_cache import CoverCache
 
 class Tagger:
     def __init__(self, cover_cache: CoverCache | None = None) -> None:
-        self.cover_cache = cover_cache
+        self.cover_resolver = CoverResolver(cover_cache)
 
     def tag(self, temp_mp3: Path, final_mp3: Path, track: TrackMetadata) -> Path:
         final_mp3.parent.mkdir(parents=True, exist_ok=True)
@@ -48,19 +48,4 @@ class Tagger:
         return final_mp3
 
     def _get_cover(self, track: TrackMetadata) -> tuple[bytes, str]:
-        """Return (image_bytes, mime) from the cover cache if available, else fetch live."""
-        if self.cover_cache and track.album_id:
-            cached = self.cover_cache.get(track.album_id)
-            if cached:
-                return cached
-
-        # Cache miss or no cache — fetch live and populate the cache
-        if not track.album_art_url:
-            return b"", "image/jpeg"
-        response = requests.get(track.album_art_url, timeout=20)
-        response.raise_for_status()
-        mime = response.headers.get("content-type", "image/jpeg").split(";")[0].strip()
-        data = response.content
-        if self.cover_cache and track.album_id:
-            self.cover_cache.put(track.album_id, data, mime)
-        return data, mime
+        return self.cover_resolver.get_or_fetch(track)

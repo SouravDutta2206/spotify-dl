@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+from spotify_dl.json_io import read_json, write_json_atomic
 from spotify_dl.models import TrackMetadata
 
 SourceKind = Literal["album", "playlist"]
@@ -26,8 +27,7 @@ class SourceCache:
         if not path.exists():
             return None
         try:
-            with path.open("r", encoding="utf-8") as fh:
-                payload = json.load(fh)
+            payload = read_json(path)
         except json.JSONDecodeError:
             return None
         if payload.get("kind") != kind or payload.get("source_id") != source_id:
@@ -56,11 +56,7 @@ class SourceCache:
             "tracks": [asdict(track) for track in tracks],
         }
         path = self._path(kind, source_id)
-        tmp = path.with_suffix(".json.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
-            fh.write("\n")
-        tmp.replace(path)
+        write_json_atomic(path, payload)
 
     def _path(self, kind: SourceKind, source_id: str) -> Path:
         return self.cache_directory / f"{kind}-{source_id}.json"
@@ -98,4 +94,3 @@ class CoverCache:
         folder = self.covers_directory / album_id
         folder.mkdir(parents=True, exist_ok=True)
         (folder / f"cover{ext}").write_bytes(data)
-

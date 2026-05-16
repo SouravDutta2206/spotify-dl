@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from spotify_dl.config import ConfigManager
 
 
@@ -51,3 +53,29 @@ def test_cookie_browser_accepts_profile_spec(tmp_path, monkeypatch):
     )
 
     assert manager.load().youtube_cookie_browser == browser
+
+
+def test_save_and_clear_user_auth(tmp_path):
+    manager = ConfigManager(tmp_path / "config.json")
+    expiry = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    manager.save_user_auth(
+        access_token="access",
+        refresh_token="refresh",
+        token_expiry=expiry,
+        scope="playlist-read-private",
+    )
+
+    raw = manager.read_raw()
+    assert raw["spotify"]["user_auth"]["access_token"] == "access"
+    assert raw["spotify"]["user_auth"]["refresh_token"] == "refresh"
+    assert raw["spotify"]["user_auth"]["token_expiry"] == "2026-01-01T00:00:00Z"
+    assert raw["spotify"]["user_auth"]["scope"] == "playlist-read-private"
+
+    manager.clear_user_auth()
+
+    raw = manager.read_raw()
+    assert raw["spotify"]["user_auth"]["access_token"] is None
+    assert raw["spotify"]["user_auth"]["refresh_token"] is None
+    assert raw["spotify"]["user_auth"]["token_expiry"] is None
+    assert raw["spotify"]["user_auth"]["scope"] is None

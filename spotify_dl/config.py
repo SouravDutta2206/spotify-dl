@@ -10,6 +10,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from spotify_dl.exceptions import ConfigError
+from spotify_dl.json_io import read_json, write_json_atomic
 from spotify_dl.models import AppConfig
 
 CONFIG_HOME = Path.home() / ".spotify-dl"
@@ -81,8 +82,7 @@ class ConfigManager:
         if not self.config_path.exists():
             return deepcopy(DEFAULT_CONFIG)
         try:
-            with self.config_path.open("r", encoding="utf-8") as fh:
-                loaded = json.load(fh)
+            loaded = read_json(self.config_path)
         except json.JSONDecodeError as exc:
             raise ConfigError(f"Config file is not valid JSON: {self.config_path}") from exc
         return _deep_merge(DEFAULT_CONFIG, loaded)
@@ -144,12 +144,7 @@ class ConfigManager:
     def save(self, partial: dict[str, Any]) -> None:
         current = self.read_raw()
         next_config = _deep_merge(current, partial)
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.config_path.with_suffix(".json.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(next_config, fh, indent=2)
-            fh.write("\n")
-        tmp.replace(self.config_path)
+        write_json_atomic(self.config_path, next_config)
 
     def clear(self) -> None:
         if self.config_path.exists():
@@ -157,6 +152,42 @@ class ConfigManager:
 
     def clear_cookies(self) -> None:
         self.save({"youtube": {"cookie_browser": None, "cookie_file": None}})
+
+    def save_user_auth(
+        self,
+        *,
+        access_token: str,
+        refresh_token: str | None,
+        token_expiry: datetime,
+        scope: str | None,
+    ) -> None:
+        self.save(
+            {
+                "spotify": {
+                    "user_auth": {
+                        "access_token": access_token,
+                        "refresh_token": refresh_token,
+                        "token_expiry": token_expiry.isoformat().replace("+00:00", "Z"),
+                        "scope": scope,
+                    }
+                }
+            }
+        )
+
+    def clear_user_auth(self) -> None:
+        self.save(
+            {
+                "spotify": {
+                    "user_auth": {
+                        "access_token": None,
+                        "refresh_token": None,
+                        "token_expiry": None,
+                        "scope": None,
+                        "display_name": None,
+                    }
+                }
+            }
+        )
 
     def masked(self) -> dict[str, Any]:
         raw = self.read_raw()

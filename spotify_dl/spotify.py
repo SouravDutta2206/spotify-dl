@@ -9,6 +9,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
 
 from spotify_dl.config import ConfigManager
+from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import SpotifyError
 from spotify_dl.models import AppConfig, PlaylistSummary, TrackMetadata
 from spotify_dl.source_cache import CoverCache, SourceCache
@@ -47,6 +48,14 @@ def _playlist_track_count(item: dict[str, Any]) -> int:
 
 def _chunks(values: list[str], size: int) -> list[list[str]]:
     return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+def _iter_page_items(client, page: dict[str, Any]):
+    while True:
+        yield from page.get("items", [])
+        if not page.get("next"):
+            break
+        page = client.next(page)
 
 
 def track_from_spotify(track: dict[str, Any], album_override: dict[str, Any] | None = None) -> TrackMetadata:
@@ -88,6 +97,7 @@ class SpotifyClient:
         _cache_dir = (cache_dir or Path.home() / ".spotify-dl" / "cache").expanduser()
         self.source_cache = SourceCache(_cache_dir)
         self.cover_cache = CoverCache(_cache_dir)
+        self.cover_resolver = CoverResolver(self.cover_cache)
 
     def resolve_url(self, url: str) -> tuple[str, str, list[TrackMetadata]]:
         kind, item_id = parse_spotify_url(url)
@@ -120,13 +130,7 @@ class SpotifyClient:
             return cached[1]
         try:
             album = self.client.album(album_id)
-            tracks: list[dict[str, Any]] = []
-            page = album["tracks"]
-            while True:
-                tracks.extend(page["items"])
-                if not page.get("next"):
-                    break
-                page = self.client.next(page)
+            tracks = list(_iter_page_items(self.client, album["tracks"]))
             full_tracks = [self.client.track(track["id"]) for track in tracks if track.get("id")]
             metadata = [track_from_spotify(track, album) for track in full_tracks]
             self.source_cache.save(
@@ -165,20 +169,16 @@ class SpotifyClient:
                 return cached[1]
             page = client.playlist_items(playlist_id, limit=100, offset=0)
             tracks: list[TrackMetadata] = []
-            while True:
-                for item in page.get("items", []):
-                    track = (item.get("track") or item.get("item")) if item else None
-                    if (
-                        not track
-                        or track.get("type") != "track"
-                        or not track.get("id")
-                        or track.get("is_local")
-                    ):
-                        continue
-                    tracks.append(track_from_spotify(track))
-                if not page.get("next"):
-                    break
-                page = client.next(page)
+            for item in _iter_page_items(client, page):
+                track = (item.get("track") or item.get("item")) if item else None
+                if (
+                    not track
+                    or track.get("type") != "track"
+                    or not track.get("id")
+                    or track.get("is_local")
+                ):
+                    continue
+                tracks.append(track_from_spotify(track))
             self.source_cache.save(
                 kind="playlist",
                 source_id=playlist_id,
@@ -193,23 +193,7 @@ class SpotifyClient:
             raise SpotifyError(f"Playlist not found on Spotify: {playlist_id}") from exc
 
     def _prefetch_covers(self, tracks: list[TrackMetadata]) -> None:
-        """Download album art for unique album_ids not yet in the cover cache."""
-        import requests
-
-        seen: set[str] = set()
-        for track in tracks:
-            if not track.album_id or not track.album_art_url:
-                continue
-            if track.album_id in seen or self.cover_cache.get(track.album_id) is not None:
-                continue
-            seen.add(track.album_id)
-            try:
-                response = requests.get(track.album_art_url, timeout=20)
-                response.raise_for_status()
-                mime = response.headers.get("content-type", "image/jpeg").split(";")[0].strip()
-                self.cover_cache.put(track.album_id, response.content, mime)
-            except Exception:
-                pass  # Non-fatal: tagger will fall back to a live request
+        self.cover_resolver.prefetch(tracks)
 
     def get_tracks(self, track_ids: list[str], client: spotipy.Spotify | None = None) -> list[TrackMetadata]:
         spotify_client = client or self.client
@@ -227,28 +211,26 @@ class SpotifyClient:
         user = self._user_client()
         playlists: list[PlaylistSummary] = []
         page = user.current_user_playlists(limit=50)
-        while True:
-            for item in page.get("items", []):
-                visibility = "collaborative" if item.get("collaborative") else (
-                    "public" if item.get("public") else "private"
+        for item in _iter_page_items(user, page):
+            visibility = (
+                "collaborative"
+                if item.get("collaborative")
+                else ("public" if item.get("public") else "private")
+            )
+            track_count = _playlist_track_count(item)
+            if track_count == 0:
+                track_count = self.get_playlist_track_count(item["id"])
+            playlists.append(
+                PlaylistSummary(
+                    playlist_id=item["id"],
+                    name=item["name"],
+                    owner=(item.get("owner") or {}).get("display_name") or "Unknown",
+                    track_count=track_count,
+                    visibility=visibility,  # type: ignore[arg-type]
+                    cover_art_url=_best_image(item.get("images", [])) or None,
+                    spotify_url=(item.get("external_urls") or {}).get("spotify", ""),
                 )
-                track_count = _playlist_track_count(item)
-                if track_count == 0:
-                    track_count = self.get_playlist_track_count(item["id"])
-                playlists.append(
-                    PlaylistSummary(
-                        playlist_id=item["id"],
-                        name=item["name"],
-                        owner=(item.get("owner") or {}).get("display_name") or "Unknown",
-                        track_count=track_count,
-                        visibility=visibility,  # type: ignore[arg-type]
-                        cover_art_url=_best_image(item.get("images", [])) or None,
-                        spotify_url=(item.get("external_urls") or {}).get("spotify", ""),
-                    )
-                )
-            if not page.get("next"):
-                break
-            page = user.next(page)
+            )
         return playlists
 
     def get_playlist_track_count(self, playlist_id: str) -> int:
@@ -291,17 +273,11 @@ class SpotifyClient:
         token_info = oauth.refresh_access_token(self.config.spotify_user_refresh_token)
         expiry = datetime.fromtimestamp(token_info["expires_at"], tz=timezone.utc)
         refresh_token = token_info.get("refresh_token") or self.config.spotify_user_refresh_token
-        self.config_manager.save(
-            {
-                "spotify": {
-                    "user_auth": {
-                        "access_token": token_info["access_token"],
-                        "refresh_token": refresh_token,
-                        "token_expiry": expiry.isoformat().replace("+00:00", "Z"),
-                        "scope": token_info.get("scope") or USER_SCOPES,
-                    }
-                }
-            }
+        self.config_manager.save_user_auth(
+            access_token=token_info["access_token"],
+            refresh_token=refresh_token,
+            token_expiry=expiry,
+            scope=token_info.get("scope") or USER_SCOPES,
         )
         self.config.spotify_user_access_token = token_info["access_token"]
         self.config.spotify_user_refresh_token = refresh_token

@@ -7,7 +7,7 @@ import pytest
 from spotify_dl.config import ConfigManager
 from spotify_dl.models import AppConfig
 from spotify_dl.spotify import SpotifyClient
-from spotify_dl.spotify import _playlist_track_count, parse_spotify_url, track_from_spotify
+from spotify_dl.spotify import _iter_page_items, _playlist_track_count, parse_spotify_url, track_from_spotify
 
 
 def test_parse_spotify_url():
@@ -85,6 +85,20 @@ def test_user_client_refreshes_expired_token(tmp_path, monkeypatch):
 
 def test_playlist_track_count_from_summary():
     assert _playlist_track_count({"tracks": {"total": 42}}) == 42
+
+
+def test_iter_page_items_follows_spotify_next_pages():
+    pages = [
+        {"items": [{"id": "first"}], "next": "next-page"},
+        {"items": [{"id": "second"}], "next": None},
+    ]
+
+    class FakeClient:
+        def next(self, page):
+            assert page is pages[0]
+            return pages[1]
+
+    assert list(_iter_page_items(FakeClient(), pages[0])) == [{"id": "first"}, {"id": "second"}]
 
 
 def test_list_user_playlists_falls_back_when_summary_count_is_zero(tmp_path, monkeypatch):
