@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from datetime import datetime, timezone
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from spotify_dl.json_io import read_json, write_json_atomic
 from spotify_dl.models import TrackMetadata
@@ -57,6 +58,26 @@ class SourceCache:
         }
         path = self._path(kind, source_id)
         write_json_atomic(path, payload)
+
+    def iter_cached_playlists(self) -> Iterator[tuple[str, Path]]:
+        if not self.cache_directory.exists():
+            return
+        for path in sorted(self.cache_directory.glob("playlist-*.json")):
+            source_id = path.name.removeprefix("playlist-").removesuffix(".json")
+            if source_id:
+                yield source_id, path
+
+    def read_playlist_payload(self, source_id: str) -> dict[str, Any] | None:
+        path = self._path("playlist", source_id)
+        if not path.exists():
+            return None
+        try:
+            payload = read_json(path)
+        except json.JSONDecodeError:
+            return None
+        if payload.get("kind") != "playlist" or payload.get("source_id") != source_id:
+            return None
+        return payload
 
     def _path(self, kind: SourceKind, source_id: str) -> Path:
         return self.cache_directory / f"{kind}-{source_id}.json"
