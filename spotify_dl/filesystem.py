@@ -28,6 +28,9 @@ class FileSystem:
     def get_playlist_directory(self, playlist_name: str) -> Path:
         return self.output_directory / sanitize_component(playlist_name)
 
+    def get_playlist_mirror_path(self, track: TrackMetadata, playlist_name: str) -> Path:
+        return self.get_playlist_directory(playlist_name) / f"{sanitize_component(track.title)}.mp3"
+
     def get_track_filename(self, track: TrackMetadata) -> str:
         prefix = (
             f"{track.disc_number}-{track.track_number:02d}"

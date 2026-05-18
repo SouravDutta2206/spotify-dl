@@ -3,10 +3,10 @@ from __future__ import annotations
 import click
 
 from spotify_dl.commands.common import config_manager, handle_spotify_dl_error, load_config
-from spotify_dl.commands.download import run_download
+from spotify_dl.commands.download import download_tracks
 from spotify_dl.exceptions import SpotifyDlError
-from spotify_dl.filesystem import FileSystem, sanitize_component
-from spotify_dl.models import TrackMetadata
+from spotify_dl.filesystem import FileSystem
+from spotify_dl.models import AppConfig, TrackMetadata
 from spotify_dl.spotify import SpotifyClient
 
 
@@ -17,14 +17,11 @@ def has_missing_track_files(
     make_playlist: bool,
     playlist_name: str,
 ) -> bool:
-    playlist_dir = filesystem.get_playlist_directory(playlist_name) if make_playlist else None
     for track in tracks:
         if not filesystem.get_track_path(track).exists():
             return True
-        if playlist_dir is not None:
-            mirror_path = playlist_dir / f"{sanitize_component(track.title)}.mp3"
-            if not mirror_path.exists():
-                return True
+        if make_playlist and not filesystem.get_playlist_mirror_path(track, playlist_name).exists():
+            return True
     return False
 
 
@@ -53,6 +50,7 @@ def run_sync(options: dict) -> None:
         for playlist_id, _path in cached_playlists:
             _sync_playlist(
                 playlist_id=playlist_id,
+                config=config,
                 spotify=spotify,
                 filesystem=filesystem,
                 download_options=download_options,
@@ -65,6 +63,7 @@ def run_sync(options: dict) -> None:
 def _sync_playlist(
     *,
     playlist_id: str,
+    config: AppConfig,
     spotify: SpotifyClient,
     filesystem: FileSystem,
     download_options: dict,
@@ -118,5 +117,11 @@ def _sync_playlist(
     else:
         click.echo(f"  Gap fill: {playlist_name} (missing files)")
 
-    url = f"https://open.spotify.com/playlist/{playlist_id}"
-    run_download(url, download_options)
+    download_tracks(
+        config=config,
+        source_type="playlist",
+        source_name=playlist_name,
+        tracks=tracks,
+        options=download_options,
+        cover_cache=spotify.cover_cache,
+    )

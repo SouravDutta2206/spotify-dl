@@ -7,7 +7,7 @@ import click
 
 from spotify_dl.commands.common import config_manager, handle_spotify_dl_error, load_config
 from spotify_dl.exceptions import SpotifyDlError
-from spotify_dl.filesystem import FileSystem
+from spotify_dl.models import AppConfig, TrackMetadata
 from spotify_dl.pipeline import DownloadPipeline
 from spotify_dl.source_cache import CoverCache
 from spotify_dl.spotify import SpotifyClient
@@ -32,28 +32,45 @@ def run_download(url: str, options: dict) -> None:
         youtube_link = options.get("youtube_link")
         if youtube_link and source_type != "track":
             raise click.ClickException("--youtube-link can only be used with a single Spotify track URL.")
-        click.echo(f"\n  {source_type.title()}: {source_name}")
-        click.echo(f"  Tracks: {len(tracks)}\n")
-        make_playlist = options.get("make_playlist", False)
-        playlist_dir = None
-        if make_playlist and source_type == "playlist":
-            playlist_dir = FileSystem(config.output_directory).get_playlist_directory(source_name)
-        results = process_tracks(
+        download_tracks(
             config=config,
             source_type=source_type,
+            source_name=source_name,
             tracks=tracks,
             options=options,
             cover_cache=spotify.cover_cache,
-            youtube_link=youtube_link,
-            playlist_dir=playlist_dir,
         )
-        done = sum(1 for result in results if result.status == "done")
-        skipped = sum(1 for result in results if result.status == "skipped")
-        failed = sum(1 for result in results if result.status == "failed")
-        click.echo(f"\n  Done. {done} downloaded, {skipped} skipped, {failed} failed.")
-        click.echo(f"  Output: {config.output_directory}")
     except SpotifyDlError as exc:
         raise handle_spotify_dl_error(exc) from exc
+
+
+def download_tracks(
+    *,
+    config: AppConfig,
+    source_type: str,
+    source_name: str,
+    tracks: list[TrackMetadata],
+    options: dict,
+    cover_cache: CoverCache | None = None,
+) -> None:
+    click.echo(f"\n  {source_type.title()}: {source_name}")
+    click.echo(f"  Tracks: {len(tracks)}\n")
+    make_playlist = options.get("make_playlist", False)
+    playlist_name = source_name if make_playlist and source_type == "playlist" else None
+    results = process_tracks(
+        config=config,
+        source_type=source_type,
+        tracks=tracks,
+        options=options,
+        cover_cache=cover_cache,
+        youtube_link=options.get("youtube_link"),
+        playlist_name=playlist_name,
+    )
+    done = sum(1 for result in results if result.status == "done")
+    skipped = sum(1 for result in results if result.status == "skipped")
+    failed = sum(1 for result in results if result.status == "failed")
+    click.echo(f"\n  Done. {done} downloaded, {skipped} skipped, {failed} failed.")
+    click.echo(f"  Output: {config.output_directory}")
 
 
 def process_tracks(
@@ -64,14 +81,14 @@ def process_tracks(
     options: dict,
     cover_cache: CoverCache | None = None,
     youtube_link: str | None = None,
-    playlist_dir=None,
+    playlist_name: str | None = None,
 ):
     if source_type not in CONCURRENT_SOURCE_TYPES or options["dry_run"] or len(tracks) <= 1:
         pipeline = DownloadPipeline(
             config,
             cover_cache=cover_cache,
             verbose=options["verbose"],
-            playlist_dir=playlist_dir,
+            playlist_name=playlist_name,
         )
         results = []
         for index, track in enumerate(tracks, start=1):
@@ -96,7 +113,7 @@ def process_tracks(
                 config,
                 cover_cache=cover_cache,
                 verbose=options["verbose"],
-                playlist_dir=playlist_dir,
+                playlist_name=playlist_name,
             ).process_track,
             track,
             skip_existing=options["skip_existing"],

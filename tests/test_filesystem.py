@@ -40,3 +40,11 @@ def test_multidisc_filename(tmp_path):
     track = make_track(disc_number=2, album_total_discs=2, track_number=1)
     assert fs.get_track_filename(track).startswith("2-01 - ")
 
+
+def test_playlist_mirror_path(tmp_path):
+    fs = FileSystem(tmp_path)
+    track = make_track(title="A/B: Song?")
+    assert fs.get_playlist_mirror_path(track, "My Playlist") == (
+        tmp_path / "My Playlist" / "A_B_ Song_.mp3"
+    )
+
