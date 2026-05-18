@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import click
 
-from spotify_dl.commands.common import config_manager, handle_spotify_dl_error, load_config
+from spotify_dl.commands.common import (
+    handle_spotify_dl_error,
+    normalize_download_options,
+    spotify_client_from_options,
+)
 from spotify_dl.commands.download import download_tracks
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.filesystem import FileSystem
@@ -27,22 +31,12 @@ def has_missing_track_files(
 
 def run_sync(options: dict) -> None:
     try:
-        config = load_config(
-            client_id=options.get("client_id"),
-            client_secret=options.get("client_secret"),
-            output_directory=options.get("output_directory"),
-            quality=options.get("quality"),
-            youtube_cookie_browser=options.get("youtube_cookie_browser"),
-            youtube_cookie_file=options.get("youtube_cookie_file"),
-            concurrency=options.get("concurrency"),
-        )
-        spotify = SpotifyClient(config, config_manager())
+        download_options = normalize_download_options(options, force_skip_existing=True)
+        config, spotify = spotify_client_from_options(download_options)
         cached_playlists = list(spotify.source_cache.iter_cached_playlists())
         if not cached_playlists:
             click.echo("No cached playlists found.")
             return
-
-        download_options = {**options, "skip_existing": True}
         filesystem = FileSystem(config.output_directory)
         make_playlist = bool(download_options.get("make_playlist"))
 

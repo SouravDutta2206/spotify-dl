@@ -60,9 +60,10 @@ def test_run_sync_skips_when_up_to_date(tmp_path, monkeypatch):
     client.source_cache = cache
     client.get_playlist_header.return_value = {"snapshot_id": "snap", "name": "Playlist"}
     download_calls = []
-    monkeypatch.setattr("spotify_dl.sync.SpotifyClient", lambda *args, **kwargs: client)
-    monkeypatch.setattr("spotify_dl.sync.load_config", lambda **kwargs: config)
-    monkeypatch.setattr("spotify_dl.sync.config_manager", lambda: MagicMock())
+    monkeypatch.setattr(
+        "spotify_dl.sync.spotify_client_from_options",
+        lambda options: (config, client),
+    )
     monkeypatch.setattr(
         "spotify_dl.sync.download_tracks",
         lambda **kwargs: download_calls.append(kwargs),
@@ -92,9 +93,10 @@ def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch):
     client.get_playlist_header.return_value = {"snapshot_id": "new-snap", "name": "Playlist"}
     client.get_playlist.return_value = [track]
     download_calls = []
-    monkeypatch.setattr("spotify_dl.sync.SpotifyClient", lambda *args, **kwargs: client)
-    monkeypatch.setattr("spotify_dl.sync.load_config", lambda **kwargs: config)
-    monkeypatch.setattr("spotify_dl.sync.config_manager", lambda: MagicMock())
+    monkeypatch.setattr(
+        "spotify_dl.sync.spotify_client_from_options",
+        lambda options: (config, client),
+    )
     monkeypatch.setattr(
         "spotify_dl.sync.download_tracks",
         lambda **kwargs: download_calls.append(kwargs),
@@ -111,7 +113,7 @@ def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch):
     assert download_calls[0]["source_type"] == "playlist"
     assert download_calls[0]["source_name"] == "Playlist"
     assert download_calls[0]["tracks"] == [track]
-    assert download_calls[0]["options"] == {"skip_existing": True}
+    assert download_calls[0]["options"]["skip_existing"] is True
 
 
 def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch):
@@ -131,9 +133,10 @@ def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch):
     client.source_cache = cache
     client.get_playlist_header.return_value = {"snapshot_id": "snap", "name": "Playlist"}
     download_calls = []
-    monkeypatch.setattr("spotify_dl.sync.SpotifyClient", lambda *args, **kwargs: client)
-    monkeypatch.setattr("spotify_dl.sync.load_config", lambda **kwargs: config)
-    monkeypatch.setattr("spotify_dl.sync.config_manager", lambda: MagicMock())
+    monkeypatch.setattr(
+        "spotify_dl.sync.spotify_client_from_options",
+        lambda options: (config, client),
+    )
     monkeypatch.setattr(
         "spotify_dl.sync.download_tracks",
         lambda **kwargs: download_calls.append(kwargs),
@@ -146,7 +149,7 @@ def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch):
     assert download_calls[0]["source_type"] == "playlist"
     assert download_calls[0]["source_name"] == "Playlist"
     assert download_calls[0]["tracks"] == [track]
-    assert download_calls[0]["options"] == {"skip_existing": True}
+    assert download_calls[0]["options"]["skip_existing"] is True
 
 
 def test_playlists_list_command(tmp_path, monkeypatch):
@@ -163,9 +166,10 @@ def test_playlists_list_command(tmp_path, monkeypatch):
             spotify_url="https://open.spotify.com/playlist/id",
         )
     ]
-    monkeypatch.setattr("spotify_dl.commands.playlists.load_config", lambda: config)
-    monkeypatch.setattr("spotify_dl.commands.playlists.config_manager", lambda: MagicMock())
-    monkeypatch.setattr("spotify_dl.commands.playlists.SpotifyClient", lambda *args, **kwargs: client)
+    monkeypatch.setattr(
+        "spotify_dl.commands.playlists.spotify_client_from_options",
+        lambda options: (config, client),
+    )
 
     result = CliRunner().invoke(cli, ["playlists", "list"])
 

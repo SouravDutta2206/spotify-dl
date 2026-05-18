@@ -5,12 +5,17 @@ import os
 
 import click
 
-from spotify_dl.commands.common import config_manager, handle_spotify_dl_error, load_config
+from spotify_dl.commands.common import (
+    download_command_options,
+    handle_spotify_dl_error,
+    merge_cli_options,
+    normalize_download_options,
+    spotify_client_from_options,
+)
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.models import AppConfig, TrackMetadata
 from spotify_dl.pipeline import DownloadPipeline
 from spotify_dl.source_cache import CoverCache
-from spotify_dl.spotify import SpotifyClient
 
 COLLECTION_MAX_WORKERS = 10
 CONCURRENT_SOURCE_TYPES = {"album", "playlist"}
@@ -18,16 +23,7 @@ CONCURRENT_SOURCE_TYPES = {"album", "playlist"}
 
 def run_download(url: str, options: dict) -> None:
     try:
-        config = load_config(
-            client_id=options["client_id"],
-            client_secret=options["client_secret"],
-            output_directory=options["output_directory"],
-            quality=options["quality"],
-            youtube_cookie_browser=options["youtube_cookie_browser"],
-            youtube_cookie_file=options["youtube_cookie_file"],
-            concurrency=options["concurrency"],
-        )
-        spotify = SpotifyClient(config, config_manager())
+        config, spotify = spotify_client_from_options(options)
         source_type, source_name, tracks = spotify.resolve_url(url)
         youtube_link = options.get("youtube_link")
         if youtube_link and source_type != "track":
@@ -145,29 +141,13 @@ def print_track_result(index: int, total: int, result) -> None:
         click.echo(f"      {result.error}", err=True)
 
 
-@click.command("download", hidden=True)
+@click.command("download")
 @click.argument("url")
-@click.option("--output", "-o", "output_directory", help="Set the output directory for downloaded files.")
-@click.option("--quality", "-q", help="Set the audio quality (e.g. 128, 192, 320).")
-@click.option("--client-id", help="Spotify API client ID.")
-@click.option("--client-secret", help="Spotify API client secret.")
-@click.option("--youtube-cookies-from", "youtube_cookie_browser", help="Browser to extract YouTube cookies from.")
-@click.option("--youtube-cookie-file", "youtube_cookie_file", help="Path to a cookies.txt file for YouTube.")
-@click.option("--skip-existing/--no-skip-existing", default=None, help="Skip downloading files that already exist.")
-@click.option("--dry-run", is_flag=True, default=None, help="Simulate the download process without fetching files.")
-@click.option("--verbose", "-v", is_flag=True, default=None, help="Enable verbose output.")
-@click.option("--concurrency", "-c", type=int, help="Maximum number of concurrent downloads.")
-@click.option("--youtube-link", "youtube_link", default=None, help="Use this YouTube URL instead of searching.")
-@click.option("--make-playlist", is_flag=True, default=None, help="Create a local folder mirroring the Spotify playlist.")
+@download_command_options
 @click.pass_context
 def download(ctx: click.Context, url: str, **kwargs) -> None:
-    parent = ctx.parent.params if ctx.parent else {}
-    options = {**parent, **{key: value for key, value in kwargs.items() if value is not None}}
-    options.setdefault("skip_existing", True)
-    options.setdefault("dry_run", False)
-    options.setdefault("verbose", False)
-    options.setdefault("youtube_link", None)
-    options.setdefault("make_playlist", False)
+    """Download a Spotify track, album, or playlist URL."""
+    options = normalize_download_options(merge_cli_options(ctx, **kwargs))
     run_download(url, options)
 
 

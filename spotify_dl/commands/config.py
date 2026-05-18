@@ -4,7 +4,12 @@ import json
 
 import click
 
-from spotify_dl.commands.common import config_manager
+from spotify_dl.commands.common import (
+    config_manager,
+    config_set_command_options,
+    merge_cli_options,
+    options_to_config_partial,
+)
 
 
 @click.group("config")
@@ -13,45 +18,14 @@ def config_cmd() -> None:
 
 
 @config_cmd.command("set")
-@click.option("--client-id", help="Spotify API client ID.")
-@click.option("--client-secret", help="Spotify API client secret.")
-@click.option("--output-dir", help="Default output directory for downloads.")
-@click.option("--quality", type=click.Choice(["0", "128", "192", "320"]), help="Default audio quality.")
-@click.option("--youtube-cookies-from", help="Browser to extract YouTube cookies from.")
-@click.option("--youtube-cookie-file", help="Path to a cookies.txt file for YouTube.")
-@click.option("--auth-port", type=int, help="Port to use for the local authentication callback server.")
-@click.option("--concurrency", type=int, help="Maximum number of concurrent downloads.")
-def config_set(**kwargs) -> None:
+@config_set_command_options
+@click.pass_context
+def config_set(ctx: click.Context, **kwargs) -> None:
     """Set configuration values."""
-    partial: dict[str, object] = {}
-    spotify: dict[str, object] = {}
-    output: dict[str, object] = {}
-    youtube: dict[str, object] = {}
-    auth: dict[str, object] = {}
-    if kwargs["client_id"]:
-        spotify["client_id"] = kwargs["client_id"]
-    if kwargs["client_secret"]:
-        spotify["client_secret"] = kwargs["client_secret"]
-    if kwargs["output_dir"]:
-        output["directory"] = kwargs["output_dir"]
-    if kwargs["quality"]:
-        output["quality"] = kwargs["quality"]
-    if kwargs["youtube_cookies_from"]:
-        youtube["cookie_browser"] = kwargs["youtube_cookies_from"]
-    if kwargs["youtube_cookie_file"]:
-        youtube["cookie_file"] = kwargs["youtube_cookie_file"]
-    if kwargs["auth_port"]:
-        auth["callback_port"] = kwargs["auth_port"]
-    if kwargs["concurrency"]:
-        partial["concurrency"] = kwargs["concurrency"]
-    if spotify:
-        partial["spotify"] = spotify
-    if output:
-        partial["output"] = output
-    if youtube:
-        partial["youtube"] = youtube
-    if auth:
-        partial["auth"] = auth
+    options = merge_cli_options(ctx, **kwargs)
+    partial = options_to_config_partial(options)
+    if not partial:
+        raise click.ClickException("No configuration values provided.")
     config_manager().save(partial)
     click.echo("Configuration saved.")
 
