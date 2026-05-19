@@ -26,11 +26,15 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, m
         def cancel(self):
             return True
 
+        def done(self):
+            # Raise KeyboardInterrupt when checking done status to simulate a keyboard interrupt
+            raise KeyboardInterrupt
+
         def result(self):
             raise AssertionError("result should not be called")
 
     class FakeExecutor:
-        def __init__(self, max_workers):
+        def __init__(self, max_workers, *args, **kwargs):
             self.max_workers = max_workers
             self.shutdown_args = None
 
@@ -41,14 +45,14 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, m
             self.shutdown_args = kwargs
 
     executor = FakeExecutor(max_workers=5)
-    exit_codes = []
-    monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers: executor)
-    monkeypatch.setattr(
-        "spotify_dl.pipeline.as_completed",
-        lambda futures: (_ for _ in ()).throw(KeyboardInterrupt),
-    )
+    monkeypatch.setattr("spotify_dl.pipeline.DaemonThreadPoolExecutor", lambda max_workers, **kwargs: executor)
+    
+    # Mock os._exit to raise SystemExit so we can verify the clean termination
+    def fake_exit(code):
+        raise SystemExit(code)
+    monkeypatch.setattr("os._exit", fake_exit)
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc_info:
         process_tracks(
             config=config,
             source_type="playlist",
@@ -56,6 +60,7 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, m
             options={"skip_existing": True, "dry_run": False, "verbose": False},
         )
 
+    assert exc_info.value.code == 130
     assert executor.shutdown_args == {"wait": False, "cancel_futures": True}
 
 
@@ -66,11 +71,14 @@ def test_album_processing_uses_concurrent_workers(tmp_path, monkeypatch):
         def __init__(self, result):
             self._result = result
 
+        def done(self):
+            return True
+
         def result(self):
             return self._result
 
     class FakeExecutor:
-        def __init__(self, max_workers):
+        def __init__(self, max_workers, *args, **kwargs):
             self.max_workers = max_workers
             self.submitted = []
             self.shutdown_args = None
@@ -83,8 +91,7 @@ def test_album_processing_uses_concurrent_workers(tmp_path, monkeypatch):
             self.shutdown_args = kwargs
 
     executor = FakeExecutor(max_workers=3)
-    monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers: executor)
-    monkeypatch.setattr("spotify_dl.pipeline.as_completed", lambda futures: iter(futures))
+    monkeypatch.setattr("spotify_dl.pipeline.DaemonThreadPoolExecutor", lambda max_workers, **kwargs: executor)
 
     results = process_tracks(
         config=config,
@@ -113,8 +120,8 @@ def test_track_processing_stays_sequential(tmp_path, monkeypatch):
 
     monkeypatch.setattr("spotify_dl.pipeline.DownloadPipeline", FakePipeline)
     monkeypatch.setattr(
-        "spotify_dl.pipeline.ThreadPoolExecutor",
-        lambda max_workers: (_ for _ in ()).throw(AssertionError("track should not use workers")),
+        "spotify_dl.pipeline.DaemonThreadPoolExecutor",
+        lambda max_workers, **kwargs: (_ for _ in ()).throw(AssertionError("track should not use workers")),
     )
 
     process_tracks(

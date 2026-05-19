@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import click
@@ -11,6 +14,22 @@ from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata
 from spotify_dl.source_cache import CoverCache
 from spotify_dl.tagger import Tagger
 from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
+
+
+class DaemonThreadPoolExecutor(ThreadPoolExecutor):
+    def submit(self, fn, *args, **kwargs):
+        orig_init = threading.Thread.__init__
+
+        def patched_init(self, *args, **kwargs):
+            kwargs["daemon"] = True
+            orig_init(self, *args, **kwargs)
+
+        threading.Thread.__init__ = patched_init
+        try:
+            return super().submit(fn, *args, **kwargs)
+        finally:
+            threading.Thread.__init__ = orig_init
+
 
 COLLECTION_MAX_WORKERS = 10
 CONCURRENT_SOURCE_TYPES = {"album", "playlist"}
@@ -159,7 +178,7 @@ def process_tracks(
     click.echo(f"  Processing {source_type} with {workers} concurrent workers.\n")
     results: list[DownloadResult] = []
     completed = 0
-    executor = ThreadPoolExecutor(max_workers=workers)
+    executor = DaemonThreadPoolExecutor(max_workers=workers)
     futures = {
         executor.submit(
             pipeline.process_track,
@@ -171,17 +190,22 @@ def process_tracks(
         for track in tracks
     }
     try:
-        for future in as_completed(futures):
-            completed += 1
-            result = future.result()
-            results.append(result)
-            print_track_result(completed, len(tracks), result)
+        futures_list = list(futures.keys())
+        while futures_list:
+            for future in [f for f in futures_list if f.done()]:
+                completed += 1
+                result = future.result()
+                results.append(result)
+                print_track_result(completed, len(tracks), result)
+                futures_list.remove(future)
+            if futures_list:
+                time.sleep(0.05)
     except KeyboardInterrupt:
         for future in futures:
             future.cancel()
         executor.shutdown(wait=False, cancel_futures=True)
         click.echo("\n  Aborted.")
-        raise SystemExit(130)
+        os._exit(130)
     else:
         executor.shutdown(wait=True)
     return results
