@@ -135,13 +135,14 @@ def process_tracks(
     playlist_name: str | None = None,
 ) -> list[DownloadResult]:
     """Run sequential or concurrent download based on source type and options."""
+    pipeline = DownloadPipeline(
+        config,
+        cover_cache=cover_cache,
+        verbose=options["verbose"],
+        playlist_name=playlist_name,
+    )
+
     if source_type not in CONCURRENT_SOURCE_TYPES or options["dry_run"] or len(tracks) <= 1:
-        pipeline = DownloadPipeline(
-            config,
-            cover_cache=cover_cache,
-            verbose=options["verbose"],
-            playlist_name=playlist_name,
-        )
         results = []
         for index, track in enumerate(tracks, start=1):
             result = pipeline.process_track(
@@ -161,12 +162,7 @@ def process_tracks(
     executor = ThreadPoolExecutor(max_workers=workers)
     futures = {
         executor.submit(
-            DownloadPipeline(
-                config,
-                cover_cache=cover_cache,
-                verbose=options["verbose"],
-                playlist_name=playlist_name,
-            ).process_track,
+            pipeline.process_track,
             track,
             skip_existing=options["skip_existing"],
             dry_run=options["dry_run"],
