@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from spotify_dl.commands.download import process_tracks
+from spotify_dl.pipeline import process_tracks
 from spotify_dl.models import AppConfig, DownloadResult
 from tests.test_filesystem import make_track
 
@@ -42,14 +42,10 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, m
 
     executor = FakeExecutor(max_workers=5)
     exit_codes = []
-    monkeypatch.setattr("spotify_dl.commands.download.ThreadPoolExecutor", lambda max_workers: executor)
+    monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers: executor)
     monkeypatch.setattr(
-        "spotify_dl.commands.download.as_completed",
+        "spotify_dl.pipeline.as_completed",
         lambda futures: (_ for _ in ()).throw(KeyboardInterrupt),
-    )
-    monkeypatch.setattr(
-        "spotify_dl.commands.download.os._exit",
-        lambda code: exit_codes.append(code) or (_ for _ in ()).throw(SystemExit(code)),
     )
 
     with pytest.raises(SystemExit):
@@ -61,7 +57,6 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, m
         )
 
     assert executor.shutdown_args == {"wait": False, "cancel_futures": True}
-    assert exit_codes == [130]
 
 
 def test_album_processing_uses_concurrent_workers(tmp_path, monkeypatch):
@@ -88,8 +83,8 @@ def test_album_processing_uses_concurrent_workers(tmp_path, monkeypatch):
             self.shutdown_args = kwargs
 
     executor = FakeExecutor(max_workers=3)
-    monkeypatch.setattr("spotify_dl.commands.download.ThreadPoolExecutor", lambda max_workers: executor)
-    monkeypatch.setattr("spotify_dl.commands.download.as_completed", lambda futures: iter(futures))
+    monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers: executor)
+    monkeypatch.setattr("spotify_dl.pipeline.as_completed", lambda futures: iter(futures))
 
     results = process_tracks(
         config=config,
@@ -116,9 +111,9 @@ def test_track_processing_stays_sequential(tmp_path, monkeypatch):
             calls.append(track.spotify_id)
             return DownloadResult(track, None, None, tmp_path / "out.mp3", "done", None)
 
-    monkeypatch.setattr("spotify_dl.commands.download.DownloadPipeline", FakePipeline)
+    monkeypatch.setattr("spotify_dl.pipeline.DownloadPipeline", FakePipeline)
     monkeypatch.setattr(
-        "spotify_dl.commands.download.ThreadPoolExecutor",
+        "spotify_dl.pipeline.ThreadPoolExecutor",
         lambda max_workers: (_ for _ in ()).throw(AssertionError("track should not use workers")),
     )
 

@@ -7,7 +7,7 @@ from spotify_dl.commands.common import (
     normalize_download_options,
     spotify_client_from_options,
 )
-from spotify_dl.commands.download import download_tracks
+from spotify_dl.pipeline import download_tracks
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.models import AppConfig, TrackMetadata
