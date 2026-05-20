@@ -148,3 +148,33 @@ def _app_config(tmp_path, *, concurrency: int) -> AppConfig:
         auth_callback_port=8888,
         concurrency=concurrency,
     )
+
+
+def test_run_download_normalizes_options(tmp_path, monkeypatch):
+    from spotify_dl.pipeline import run_download
+    from unittest.mock import MagicMock
+
+    config = _app_config(tmp_path, concurrency=3)
+    client = MagicMock()
+    client.resolve_url.return_value = ("track", "Title", [make_track(spotify_id="track-id")])
+    
+    monkeypatch.setattr(
+        "spotify_dl.pipeline.spotify_client_from_options",
+        lambda options: (config, client),
+    )
+
+    download_calls = []
+    monkeypatch.setattr(
+        "spotify_dl.pipeline.download_tracks",
+        lambda **kwargs: download_calls.append(kwargs),
+    )
+
+    # Pass incomplete options, just like CLI does
+    run_download("spotify:track:abc", {"output": str(tmp_path)})
+
+    assert len(download_calls) == 1
+    opts = download_calls[0]["options"]
+    assert opts["verbose"] is False
+    assert opts["dry_run"] is False
+    assert opts["skip_existing"] is True
+

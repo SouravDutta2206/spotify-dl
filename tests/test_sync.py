@@ -3,10 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from click.testing import CliRunner
+import pytest
 
 from spotify_dl.filesystem import FileSystem
-from spotify_dl.main import cli
 from spotify_dl.models import AppConfig, PlaylistSummary
 from spotify_dl.source_cache import SourceCache
 from spotify_dl.sync import has_missing_track_files, run_sync
@@ -152,7 +151,7 @@ def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch):
     assert download_calls[0]["options"]["skip_existing"] is True
 
 
-def test_playlists_list_command(tmp_path, monkeypatch):
+def test_playlists_list_command(tmp_path, monkeypatch, capsys):
     config = _config(tmp_path)
     client = MagicMock()
     client.list_user_playlists.return_value = [
@@ -167,23 +166,30 @@ def test_playlists_list_command(tmp_path, monkeypatch):
         )
     ]
     monkeypatch.setattr(
-        "spotify_dl.commands.playlists.spotify_client_from_options",
+        "spotify_dl.main.spotify_client_from_options",
         lambda options: (config, client),
     )
 
-    result = CliRunner().invoke(cli, ["playlists", "list"])
+    monkeypatch.setattr("sys.argv", ["spotify-dl", "playlists", "list"])
 
-    assert result.exit_code == 0
-    assert "Test" in result.output
-    assert "5 tracks" in result.output
+    from spotify_dl.main import main
+    main()
+
+    captured = capsys.readouterr()
+    assert "Test" in captured.out
+    assert "5 tracks" in captured.out
 
 
-def test_playlists_without_subcommand_shows_help():
-    result = CliRunner().invoke(cli, ["playlists"])
+def test_playlists_without_subcommand_shows_help(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["spotify-dl", "playlists"])
 
-    assert result.exit_code == 2
-    assert "list" in result.output
-    assert "sync" in result.output
+    from spotify_dl.main import main
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "playlists" in captured.err
 
 
 def _config(tmp_path) -> AppConfig:

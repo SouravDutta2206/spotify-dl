@@ -4,12 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spotify-dl"
-version = "0.1.45"
+version = "0.1.47"
 description = "Download Spotify tracks, albums, and playlists as tagged MP3 files."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "click>=8.1",
   "mutagen>=1.47",
   "python-dotenv>=1.0",
   "requests>=2.31",
@@ -29,7 +28,7 @@ dev = [
 ]
 
 [project.scripts]
-spotify-dl = "spotify_dl.main:cli"
+spotify-dl = "spotify_dl.main:main"
 
 [tool.setuptools.packages.find]
 include = ["spotify_dl*"]

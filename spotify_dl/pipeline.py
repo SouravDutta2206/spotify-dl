@@ -7,13 +7,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import click
+import sys
 
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata
 from spotify_dl.source_cache import CoverCache
 from spotify_dl.tagger import Tagger
 from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
+from spotify_dl.exceptions import SpotifyDlError
+from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
 
 
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
@@ -89,28 +91,20 @@ class DownloadPipeline:
 
 def run_download(url: str, options: dict) -> None:
     """Resolve a Spotify URL and download all tracks."""
-    from spotify_dl.commands.common import (  # local import avoids circular dep
-        spotify_client_from_options,
+    download_options = normalize_download_options(options)
+    config, spotify = spotify_client_from_options(download_options)
+    source_type, source_name, tracks = spotify.resolve_url(url)
+    youtube_link = download_options.get("youtube_link")
+    if youtube_link and source_type != "track":
+        raise SpotifyDlError("--youtube-link can only be used with a single Spotify track URL.")
+    download_tracks(
+        config=config,
+        source_type=source_type,
+        source_name=source_name,
+        tracks=tracks,
+        options=download_options,
+        cover_cache=spotify.cover_cache,
     )
-    from spotify_dl.exceptions import SpotifyDlError
-
-    try:
-        config, spotify = spotify_client_from_options(options)
-        source_type, source_name, tracks = spotify.resolve_url(url)
-        youtube_link = options.get("youtube_link")
-        if youtube_link and source_type != "track":
-            raise click.ClickException("--youtube-link can only be used with a single Spotify track URL.")
-        download_tracks(
-            config=config,
-            source_type=source_type,
-            source_name=source_name,
-            tracks=tracks,
-            options=options,
-            cover_cache=spotify.cover_cache,
-        )
-    except SpotifyDlError as exc:
-        from spotify_dl.commands.common import handle_spotify_dl_error
-        raise handle_spotify_dl_error(exc) from exc
 
 
 def download_tracks(
@@ -123,8 +117,8 @@ def download_tracks(
     cover_cache: CoverCache | None = None,
 ) -> None:
     """Print source header, dispatch to process_tracks, print summary."""
-    click.echo(f"\n  {source_type.title()}: {source_name}")
-    click.echo(f"  Tracks: {len(tracks)}\n")
+    print(f"\n  {source_type.title()}: {source_name}")
+    print(f"  Tracks: {len(tracks)}\n")
     make_playlist = options.get("make_playlist", False)
     playlist_name = source_name if make_playlist and source_type == "playlist" else None
     results = process_tracks(
@@ -139,8 +133,8 @@ def download_tracks(
     done = sum(1 for result in results if result.status == "done")
     skipped = sum(1 for result in results if result.status == "skipped")
     failed = sum(1 for result in results if result.status == "failed")
-    click.echo(f"\n  Done. {done} downloaded, {skipped} skipped, {failed} failed.")
-    click.echo(f"  Output: {config.output_directory}")
+    print(f"\n  Done. {done} downloaded, {skipped} skipped, {failed} failed.")
+    print(f"  Output: {config.output_directory}")
 
 
 def process_tracks(
@@ -175,7 +169,7 @@ def process_tracks(
         return results
 
     workers = min(max(1, int(config.concurrency)), COLLECTION_MAX_WORKERS, len(tracks))
-    click.echo(f"  Processing {source_type} with {workers} concurrent workers.\n")
+    print(f"  Processing {source_type} with {workers} concurrent workers.\n")
     results: list[DownloadResult] = []
     completed = 0
     executor = DaemonThreadPoolExecutor(max_workers=workers)
@@ -204,7 +198,7 @@ def process_tracks(
         for future in futures:
             future.cancel()
         executor.shutdown(wait=False, cancel_futures=True)
-        click.echo("\n  Aborted.")
+        print("\n  Aborted.")
         os._exit(130)
     else:
         executor.shutdown(wait=True)
@@ -214,7 +208,7 @@ def process_tracks(
 def print_track_result(index: int, total: int, result: DownloadResult) -> None:
     """Print a single track's outcome to stdout (and errors to stderr)."""
     marker = {"done": "done", "skipped": "skipped", "failed": "failed"}[result.status]
-    click.echo(f"  [{index}/{total}] {result.track.title} ... {marker}")
+    print(f"  [{index}/{total}] {result.track.title} ... {marker}")
     if result.error:
-        click.echo(f"      {result.error}", err=True)
+        print(f"      {result.error}", file=sys.stderr)
 
