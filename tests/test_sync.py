@@ -3,14 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-import pytest
-
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.models import AppConfig, PlaylistSummary
 from spotify_dl.source_cache import SourceCache
 from spotify_dl.sync import has_missing_track_files, run_sync
-from tests.test_filesystem import make_track
+from tests.conftest import make_track
 
+import pytest
 
 def test_has_missing_track_files_detects_missing_primary(tmp_path):
     fs = FileSystem(tmp_path)
@@ -39,7 +38,7 @@ def test_has_missing_track_files_detects_missing_mirror(tmp_path):
     assert has_missing_track_files(fs, [track], make_playlist=True, playlist_name="Playlist") is True
 
 
-def test_run_sync_skips_when_up_to_date(tmp_path, monkeypatch):
+def test_run_sync_skips_when_up_to_date(tmp_path, monkeypatch, app_config):
     cache_dir = tmp_path / "cache"
     cache = SourceCache(cache_dir)
     track = make_track(spotify_id="track-id")
@@ -54,7 +53,7 @@ def test_run_sync_skips_when_up_to_date(tmp_path, monkeypatch):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"mp3")
 
-    config = _config(tmp_path)
+    config = app_config
     client = MagicMock()
     client.source_cache = cache
     client.get_playlist_header.return_value = {"snapshot_id": "snap", "name": "Playlist"}
@@ -74,7 +73,7 @@ def test_run_sync_skips_when_up_to_date(tmp_path, monkeypatch):
     client.get_playlist.assert_not_called()
 
 
-def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch):
+def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch, app_config):
     cache_dir = tmp_path / "cache"
     cache = SourceCache(cache_dir)
     track = make_track(spotify_id="track-id")
@@ -86,7 +85,7 @@ def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch):
         tracks=[track],
     )
 
-    config = _config(tmp_path)
+    config = app_config
     client = MagicMock()
     client.source_cache = cache
     client.get_playlist_header.return_value = {"snapshot_id": "new-snap", "name": "Playlist"}
@@ -115,7 +114,7 @@ def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch):
     assert download_calls[0]["options"]["skip_existing"] is True
 
 
-def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch):
+def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch, app_config):
     cache_dir = tmp_path / "cache"
     cache = SourceCache(cache_dir)
     track = make_track(spotify_id="track-id")
@@ -127,7 +126,7 @@ def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch):
         tracks=[track],
     )
 
-    config = _config(tmp_path)
+    config = app_config
     client = MagicMock()
     client.source_cache = cache
     client.get_playlist_header.return_value = {"snapshot_id": "snap", "name": "Playlist"}
@@ -151,8 +150,8 @@ def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch):
     assert download_calls[0]["options"]["skip_existing"] is True
 
 
-def test_playlists_list_command(tmp_path, monkeypatch, capsys):
-    config = _config(tmp_path)
+def test_playlists_list_command(tmp_path, monkeypatch, capsys, app_config):
+    config = app_config
     client = MagicMock()
     client.list_user_playlists.return_value = [
         PlaylistSummary(
@@ -190,19 +189,3 @@ def test_playlists_without_subcommand_shows_help(monkeypatch, capsys):
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
     assert "playlists" in captured.err
-
-
-def _config(tmp_path) -> AppConfig:
-    return AppConfig(
-        spotify_client_id="id",
-        spotify_client_secret="secret",
-        spotify_user_access_token="access",
-        spotify_user_refresh_token="refresh",
-        spotify_user_token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
-        output_directory=tmp_path,
-        audio_quality="0",
-        youtube_cookie_browser=None,
-        youtube_cookie_file=None,
-        auth_callback_port=8888,
-        concurrency=3,
-    )

@@ -25,13 +25,8 @@ class SourceCache:
         snapshot_id: str | None = None,
     ) -> tuple[str, list[TrackMetadata]] | None:
         path = self._path(kind, source_id)
-        if not path.exists():
-            return None
-        try:
-            payload = read_json(path)
-        except json.JSONDecodeError:
-            return None
-        if payload.get("kind") != kind or payload.get("source_id") != source_id:
+        payload = self._read_payload(path, kind=kind, source_id=source_id)
+        if payload is None:
             return None
         if kind == "playlist" and payload.get("snapshot_id") != snapshot_id:
             return None
@@ -69,13 +64,19 @@ class SourceCache:
 
     def read_playlist_payload(self, source_id: str) -> dict[str, Any] | None:
         path = self._path("playlist", source_id)
+        return self._read_payload(path, kind="playlist", source_id=source_id)
+
+    def _read_payload(
+        self, path: Path, *, kind: SourceKind, source_id: str
+    ) -> dict[str, Any] | None:
+        """Read and validate a cache JSON file. Returns None on any error or mismatch."""
         if not path.exists():
             return None
         try:
             payload = read_json(path)
         except json.JSONDecodeError:
             return None
-        if payload.get("kind") != "playlist" or payload.get("source_id") != source_id:
+        if payload.get("kind") != kind or payload.get("source_id") != source_id:
             return None
         return payload
 

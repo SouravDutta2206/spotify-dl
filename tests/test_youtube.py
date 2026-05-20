@@ -8,7 +8,7 @@ from spotify_dl.youtube import (
     parse_cookies_from_browser,
     parse_youtube_video_id,
 )
-from tests.test_filesystem import make_track
+from tests.conftest import make_track
 
 
 def test_youtube_duration_and_text_score():

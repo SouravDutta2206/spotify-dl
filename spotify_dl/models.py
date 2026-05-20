@@ -65,7 +65,6 @@ class YouTubeMatch:
 class DownloadResult:
     track: TrackMetadata
     match: YouTubeMatch | None
-    temp_mp3_path: Path | None
     final_mp3_path: Path | None
     status: Literal["done", "skipped", "failed"]
     error: str | None

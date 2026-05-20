@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import os
 import shutil
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
 import sys
 
 from spotify_dl.filesystem import FileSystem
@@ -16,21 +14,6 @@ from spotify_dl.tagger import Tagger
 from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
-
-
-class DaemonThreadPoolExecutor(ThreadPoolExecutor):
-    def submit(self, fn, *args, **kwargs):
-        orig_init = threading.Thread.__init__
-
-        def patched_init(self, *args, **kwargs):
-            kwargs["daemon"] = True
-            orig_init(self, *args, **kwargs)
-
-        threading.Thread.__init__ = patched_init
-        try:
-            return super().submit(fn, *args, **kwargs)
-        finally:
-            threading.Thread.__init__ = orig_init
 
 
 COLLECTION_MAX_WORKERS = 10
@@ -64,17 +47,17 @@ class DownloadPipeline:
         final_path = self.filesystem.get_track_path(track)
         if skip_existing and final_path.exists():
             self._copy_to_playlist(final_path, track)
-            return DownloadResult(track, None, None, final_path, "skipped", None)
+            return DownloadResult(track, None, final_path, "skipped", None)
         if dry_run:
-            return DownloadResult(track, None, None, final_path, "skipped", None)
+            return DownloadResult(track, None, final_path, "skipped", None)
         try:
             match = make_direct_match(youtube_url) if youtube_url else self.searcher.find_best_match(track)
             temp_path = self.downloader.download_mp3(match)
             tagged = self.tagger.tag(temp_path, final_path, track)
             self._copy_to_playlist(tagged, track)
-            return DownloadResult(track, match, None, tagged, "done", None)
+            return DownloadResult(track, match, tagged, "done", None)
         except Exception as exc:
-            return DownloadResult(track, None, None, final_path, "failed", str(exc))
+            return DownloadResult(track, None, final_path, "failed", str(exc))
 
     def _copy_to_playlist(self, source: Path, track: TrackMetadata) -> None:
         if not self.playlist_name:
@@ -157,22 +140,26 @@ def process_tracks(
 
     if source_type not in CONCURRENT_SOURCE_TYPES or options["dry_run"] or len(tracks) <= 1:
         results = []
-        for index, track in enumerate(tracks, start=1):
-            result = pipeline.process_track(
-                track,
-                skip_existing=options["skip_existing"],
-                dry_run=options["dry_run"],
-                youtube_url=youtube_link,
-            )
-            results.append(result)
-            print_track_result(index, len(tracks), result)
+        try:
+            for index, track in enumerate(tracks, start=1):
+                result = pipeline.process_track(
+                    track,
+                    skip_existing=options["skip_existing"],
+                    dry_run=options["dry_run"],
+                    youtube_url=youtube_link,
+                )
+                results.append(result)
+                print_track_result(index, len(tracks), result)
+        except KeyboardInterrupt:
+            print("\n  Aborted.")
+            raise SystemExit(130)
         return results
 
     workers = min(max(1, int(config.concurrency)), COLLECTION_MAX_WORKERS, len(tracks))
     print(f"  Processing {source_type} with {workers} concurrent workers.\n")
     results: list[DownloadResult] = []
     completed = 0
-    executor = DaemonThreadPoolExecutor(max_workers=workers)
+    executor = ThreadPoolExecutor(max_workers=workers)
     futures = {
         executor.submit(
             pipeline.process_track,
@@ -207,7 +194,7 @@ def process_tracks(
 
 def print_track_result(index: int, total: int, result: DownloadResult) -> None:
     """Print a single track's outcome to stdout (and errors to stderr)."""
-    marker = {"done": "done", "skipped": "skipped", "failed": "failed"}[result.status]
+    marker = result.status
     print(f"  [{index}/{total}] {result.track.title} ... {marker}")
     if result.error:
         print(f"      {result.error}", file=sys.stderr)

@@ -7,14 +7,6 @@ from spotify_dl.models import AppConfig
 from spotify_dl.spotify import SpotifyClient
 
 
-def config_manager() -> ConfigManager:
-    return ConfigManager()
-
-
-def load_config(**overrides):
-    return config_manager().load(**overrides)
-
-
 def normalize_download_options(
     options: dict[str, Any],
     *,
@@ -33,7 +25,7 @@ def normalize_download_options(
 
 
 def config_from_options(options: dict[str, Any]) -> AppConfig:
-    return load_config(
+    return ConfigManager().load(
         client_id=options.get("client_id"),
         client_secret=options.get("client_secret"),
         output_directory=options.get("output") or options.get("output_directory"),
@@ -46,4 +38,4 @@ def config_from_options(options: dict[str, Any]) -> AppConfig:
 
 def spotify_client_from_options(options: dict[str, Any]) -> tuple[AppConfig, SpotifyClient]:
     config = config_from_options(options)
-    return config, SpotifyClient(config, config_manager())
+    return config, SpotifyClient(config, ConfigManager())

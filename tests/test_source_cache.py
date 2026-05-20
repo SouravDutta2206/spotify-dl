@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from spotify_dl.source_cache import SourceCache
-from tests.test_filesystem import make_track
+from tests.conftest import make_track
 
 
 def test_playlist_cache_requires_matching_snapshot(tmp_path):

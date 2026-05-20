@@ -3,27 +3,7 @@ from __future__ import annotations
 from spotify_dl.filesystem import FileSystem, sanitize_component
 from spotify_dl.models import TrackMetadata
 
-
-def make_track(**overrides):
-    data = {
-        "spotify_id": "1",
-        "isrc": None,
-        "title": "A/B: Song?",
-        "artists": ["Artist"],
-        "track_number": 3,
-        "disc_number": 1,
-        "duration_ms": 180000,
-        "album_id": "alb",
-        "album_name": "Album",
-        "album_artist": "Artist",
-        "album_total_tracks": 10,
-        "album_total_discs": 1,
-        "album_release_date": "2020-01-01",
-        "album_art_url": "",
-        "album_genres": [],
-    }
-    data.update(overrides)
-    return TrackMetadata(**data)
+from tests.conftest import make_track
 
 
 def test_sanitize_component():

@@ -7,9 +7,10 @@ from typing import Any
 
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.auth import AuthManager
+from spotify_dl.config import ConfigManager
 from spotify_dl.sync import run_sync
 from spotify_dl.pipeline import run_download
-from spotify_dl.cli_utils import config_manager, spotify_client_from_options
+from spotify_dl.cli_utils import spotify_client_from_options
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -403,7 +404,7 @@ def main() -> None:
     # ── Dispatch ──────────────────────────────────────────────────────────────
     try:
         if args.command == "auth":
-            manager = config_manager()
+            manager = ConfigManager()
             if args.auth_command == "login":
                 
                 print(AuthManager(manager.load(), manager).login())
@@ -420,7 +421,7 @@ def main() -> None:
                     print(f"Token expires: {config.spotify_user_token_expiry.isoformat()}")
 
         elif args.command == "config":
-            manager = config_manager()
+            manager = ConfigManager()
             if args.config_command == "set":
                 key = args.key.lower().replace("_", "-")
                 partial: dict[str, Any] = {}
@@ -436,7 +437,7 @@ def main() -> None:
                     partial = {"output": {"quality": args.value}}
                 elif key in ("youtube-cookies-from", "youtube-cookie-browser"):
                     partial = {"youtube": {"cookie_browser": args.value}}
-                elif key in ("youtube-cookie-file", "youtube-cookie-file"):
+                elif key == "youtube-cookie-file":
                     partial = {"youtube": {"cookie_file": args.value}}
                 elif key == "concurrency":
                     try:
@@ -494,6 +495,9 @@ def main() -> None:
     except SpotifyDlError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n  Aborted.", file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == "__main__":

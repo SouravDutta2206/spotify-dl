@@ -6,15 +6,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
+from spotipy.oauth2 import SpotifyClientCredentials
 
+from spotify_dl.auth import USER_SCOPES, build_spotify_oauth
 from spotify_dl.config import ConfigManager
 from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import SpotifyError
 from spotify_dl.models import AppConfig, PlaylistSummary, TrackMetadata
 from spotify_dl.source_cache import CoverCache, SourceCache
 
-USER_SCOPES = "playlist-read-private playlist-read-collaborative"
 
 SPOTIFY_URL_RE = re.compile(
     r"https?://open\.spotify\.com/(?P<kind>track|album|playlist)/(?P<id>[A-Za-z0-9]+)"
@@ -263,13 +263,7 @@ class SpotifyClient:
             raise SpotifyError("Run spotify-dl auth login first")
         if not self.config_manager:
             raise SpotifyError("User token expired. Run spotify-dl auth login again.")
-        oauth = SpotifyOAuth(
-            client_id=self.config.spotify_client_id,
-            client_secret=self.config.spotify_client_secret,
-            redirect_uri=f"http://127.0.0.1:{self.config.auth_callback_port}/callback",
-            scope=USER_SCOPES,
-            open_browser=False,
-        )
+        oauth = build_spotify_oauth(self.config, open_browser=False)
         token_info = oauth.refresh_access_token(self.config.spotify_user_refresh_token)
         expiry = datetime.fromtimestamp(token_info["expires_at"], tz=timezone.utc)
         refresh_token = token_info.get("refresh_token") or self.config.spotify_user_refresh_token

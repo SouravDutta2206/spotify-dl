@@ -4,7 +4,7 @@ import pytest
 
 from spotify_dl.pipeline import process_tracks
 from spotify_dl.models import AppConfig, DownloadResult
-from tests.test_filesystem import make_track
+from tests.conftest import make_track
 
 
 def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, monkeypatch):
@@ -45,12 +45,8 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, m
             self.shutdown_args = kwargs
 
     executor = FakeExecutor(max_workers=5)
-    monkeypatch.setattr("spotify_dl.pipeline.DaemonThreadPoolExecutor", lambda max_workers, **kwargs: executor)
-    
-    # Mock os._exit to raise SystemExit so we can verify the clean termination
-    def fake_exit(code):
-        raise SystemExit(code)
-    monkeypatch.setattr("os._exit", fake_exit)
+    monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers, **kwargs: executor)
+    monkeypatch.setattr("os._exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
 
     with pytest.raises(SystemExit) as exc_info:
         process_tracks(
@@ -64,8 +60,8 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, m
     assert executor.shutdown_args == {"wait": False, "cancel_futures": True}
 
 
-def test_album_processing_uses_concurrent_workers(tmp_path, monkeypatch):
-    config = _app_config(tmp_path, concurrency=3)
+def test_album_processing_uses_concurrent_workers(app_config, tmp_path, monkeypatch):
+    config = app_config
 
     class FakeFuture:
         def __init__(self, result):
@@ -85,13 +81,13 @@ def test_album_processing_uses_concurrent_workers(tmp_path, monkeypatch):
 
         def submit(self, func, track, **kwargs):
             self.submitted.append((func, track, kwargs))
-            return FakeFuture(DownloadResult(track, None, None, tmp_path / "out.mp3", "done", None))
+            return FakeFuture(DownloadResult(track, None, tmp_path / "out.mp3", "done", None))
 
         def shutdown(self, **kwargs):
             self.shutdown_args = kwargs
 
     executor = FakeExecutor(max_workers=3)
-    monkeypatch.setattr("spotify_dl.pipeline.DaemonThreadPoolExecutor", lambda max_workers, **kwargs: executor)
+    monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers, **kwargs: executor)
 
     results = process_tracks(
         config=config,
@@ -106,8 +102,8 @@ def test_album_processing_uses_concurrent_workers(tmp_path, monkeypatch):
     assert [result.status for result in results] == ["done", "done", "done", "done"]
 
 
-def test_track_processing_stays_sequential(tmp_path, monkeypatch):
-    config = _app_config(tmp_path, concurrency=3)
+def test_track_processing_stays_sequential(app_config, tmp_path, monkeypatch):
+    config = app_config
     calls = []
 
     class FakePipeline:
@@ -116,11 +112,11 @@ def test_track_processing_stays_sequential(tmp_path, monkeypatch):
 
         def process_track(self, track, **kwargs):
             calls.append(track.spotify_id)
-            return DownloadResult(track, None, None, tmp_path / "out.mp3", "done", None)
+            return DownloadResult(track, None, tmp_path / "out.mp3", "done", None)
 
     monkeypatch.setattr("spotify_dl.pipeline.DownloadPipeline", FakePipeline)
     monkeypatch.setattr(
-        "spotify_dl.pipeline.DaemonThreadPoolExecutor",
+        "spotify_dl.pipeline.ThreadPoolExecutor",
         lambda max_workers, **kwargs: (_ for _ in ()).throw(AssertionError("track should not use workers")),
     )
 
@@ -134,27 +130,12 @@ def test_track_processing_stays_sequential(tmp_path, monkeypatch):
     assert calls == ["track-id"]
 
 
-def _app_config(tmp_path, *, concurrency: int) -> AppConfig:
-    return AppConfig(
-        spotify_client_id="id",
-        spotify_client_secret="secret",
-        spotify_user_access_token=None,
-        spotify_user_refresh_token=None,
-        spotify_user_token_expiry=None,
-        output_directory=tmp_path,
-        audio_quality="0",
-        youtube_cookie_browser=None,
-        youtube_cookie_file=None,
-        auth_callback_port=8888,
-        concurrency=concurrency,
-    )
 
-
-def test_run_download_normalizes_options(tmp_path, monkeypatch):
+def test_run_download_normalizes_options(app_config, tmp_path, monkeypatch):
     from spotify_dl.pipeline import run_download
     from unittest.mock import MagicMock
 
-    config = _app_config(tmp_path, concurrency=3)
+    config = app_config
     client = MagicMock()
     client.resolve_url.return_value = ("track", "Title", [make_track(spotify_id="track-id")])
     

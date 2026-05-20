@@ -75,7 +75,7 @@ def test_user_client_refreshes_expired_token(tmp_path, monkeypatch):
                 "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
             }
 
-    monkeypatch.setattr("spotify_dl.spotify.SpotifyOAuth", FakeOAuth)
+    monkeypatch.setattr("spotify_dl.auth.SpotifyOAuth", FakeOAuth)
 
     SpotifyClient(config, manager)._user_client()
 

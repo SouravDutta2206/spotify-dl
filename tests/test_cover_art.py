@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from spotify_dl.cover_art import CoverResolver
 from spotify_dl.source_cache import CoverCache
-from tests.test_filesystem import make_track
+from tests.conftest import make_track
 
 
 def test_cover_resolver_returns_cached_cover_without_fetching(tmp_path, monkeypatch):
