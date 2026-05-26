@@ -150,12 +150,19 @@ def test_run_download_normalizes_options(app_config, tmp_path, monkeypatch):
         lambda **kwargs: download_calls.append(kwargs),
     )
 
-    # Pass incomplete options, just like CLI does
-    run_download("spotify:track:abc", {"output": str(tmp_path)})
+    # Pass incomplete options, and options with None value (like parsed CLI args)
+    run_download("spotify:track:abc", {
+        "output": str(tmp_path),
+        "skip_existing": None,
+        "dry_run": None,
+        "verbose": None,
+        "make_playlist": None,
+    })
 
     assert len(download_calls) == 1
     opts = download_calls[0]["options"]
     assert opts["verbose"] is False
     assert opts["dry_run"] is False
     assert opts["skip_existing"] is True
+    assert opts["make_playlist"] is False
 

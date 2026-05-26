@@ -15,12 +15,21 @@ def normalize_download_options(
     normalized = dict(options)
     if force_skip_existing is not None:
         normalized["skip_existing"] = force_skip_existing
-    else:
-        normalized.setdefault("skip_existing", True)
-    normalized.setdefault("dry_run", False)
-    normalized.setdefault("verbose", False)
-    normalized.setdefault("youtube_link", None)
-    normalized.setdefault("make_playlist", False)
+    elif normalized.get("skip_existing") is None:
+        normalized["skip_existing"] = True
+
+    if normalized.get("dry_run") is None:
+        normalized["dry_run"] = False
+
+    if normalized.get("verbose") is None:
+        normalized["verbose"] = False
+
+    if normalized.get("youtube_link") is None:
+        normalized["youtube_link"] = None
+
+    if normalized.get("make_playlist") is None:
+        normalized["make_playlist"] = False
+
     return normalized
 
 

@@ -7,7 +7,7 @@ from spotipy.oauth2 import SpotifyOAuth
 from spotify_dl.config import ConfigManager
 from spotify_dl.models import AppConfig
 
-USER_SCOPES = "playlist-read-private playlist-read-collaborative"
+USER_SCOPES = "playlist-read-private playlist-read-collaborative playlist-modify-public playlist-modify-private"
 
 
 def build_spotify_oauth(config: AppConfig, *, open_browser: bool) -> SpotifyOAuth:
