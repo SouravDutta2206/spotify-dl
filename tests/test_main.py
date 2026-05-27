@@ -7,6 +7,78 @@ from spotify_dl.models import AppConfig, DownloadResult
 from tests.conftest import make_track
 
 
+def _parse_download_args(argv):
+    from spotify_dl.main import _get_subparser, build_parser
+
+    parser = build_parser()
+    return parser, _get_subparser(parser, "download"), parser.parse_args(["download", *argv])
+
+
+def test_cli_alias_calls_main(monkeypatch):
+    from spotify_dl import main as main_module
+
+    calls = []
+    monkeypatch.setattr(main_module, "main", lambda: calls.append("main"))
+
+    main_module.cli()
+
+    assert calls == ["main"]
+
+
+def test_download_validation_allows_mixed_sources_without_youtube_link():
+    from spotify_dl.main import validate_download
+
+    parser, download_parser, args = _parse_download_args(
+        [
+            "https://open.spotify.com/track/track123",
+            "https://open.spotify.com/album/album123",
+        ]
+    )
+
+    validate_download(args, download_parser)
+    assert parser.prog == "spotify-dl"
+
+
+def test_download_validation_allows_tracks_with_youtube_link():
+    from spotify_dl.main import validate_download
+
+    _, download_parser, args = _parse_download_args(
+        [
+            "https://open.spotify.com/track/track123",
+            "spotify:track:track456",
+            "--youtube-link",
+            "https://youtube.com/watch?v=first",
+            "https://youtube.com/watch?v=second",
+        ]
+    )
+
+    validate_download(args, download_parser)
+
+
+@pytest.mark.parametrize(
+    "spotify_url",
+    [
+        "https://open.spotify.com/album/album123",
+        "https://open.spotify.com/playlist/playlist123",
+    ],
+)
+def test_download_validation_rejects_collections_when_using_youtube_link(spotify_url):
+    from spotify_dl.main import validate_download
+
+    _, download_parser, args = _parse_download_args(
+        [
+            spotify_url,
+            "--youtube-link",
+            "https://youtube.com/watch?v=collection",
+        ]
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        validate_download(args, download_parser)
+
+    assert exc_info.value.code == 2
+
+
 def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, monkeypatch):
     config = AppConfig(
         spotify_client_id="id",

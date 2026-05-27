@@ -12,11 +12,11 @@ from spotify_dl.spotify import _iter_page_items, _playlist_track_count, parse_sp
 
 def test_parse_spotify_url():
     assert parse_spotify_url("https://open.spotify.com/album/abc123?si=x") == ("album", "abc123")
+    assert parse_spotify_url("spotify:track:def456") == ("track", "def456")
 
 
 def test_parse_spotify_url_rejects_invalid():
-    with pytest.raises(Exception):
-        parse_spotify_url("https://example.com/nope")
+    assert parse_spotify_url("https://example.com/nope") == (None, None)
 
 
 def test_track_from_spotify_maps_metadata():

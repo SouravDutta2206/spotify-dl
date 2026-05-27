@@ -19,13 +19,16 @@ from spotify_dl.source_cache import CoverCache, SourceCache
 SPOTIFY_URL_RE = re.compile(
     r"https?://open\.spotify\.com/(?P<kind>track|album|playlist)/(?P<id>[A-Za-z0-9]+)"
 )
+SPOTIFY_URI_RE = re.compile(
+    r"spotify:(?P<kind>track|album|playlist):(?P<id>[A-Za-z0-9]+)"
+)
 
 
 def parse_spotify_url(url: str) -> tuple[Literal["track", "album", "playlist"], str]:
-    match = SPOTIFY_URL_RE.search(url)
+    match = SPOTIFY_URL_RE.search(url) or SPOTIFY_URI_RE.fullmatch(url)
     if not match:
-        raise SpotifyError("Not a valid Spotify URL")
-    return match.group("kind"), match.group("id")  # type: ignore[return-value]
+        return None, None
+    return match.group("kind"), match.group("id")
 
 
 def _best_image(images: list[dict[str, Any]]) -> str:

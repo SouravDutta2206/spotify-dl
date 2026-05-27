@@ -11,6 +11,10 @@ from spotify_dl.config import ConfigManager
 from spotify_dl.sync import run_sync
 from spotify_dl.pipeline import run_download
 from spotify_dl.cli_utils import spotify_client_from_options
+from spotify_dl.spotify import parse_spotify_url
+
+
+COLLECTION_SOURCE_TYPES = {"album", "playlist"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +119,7 @@ def build_auth_parser(subparsers) -> None:
     auth_sub.required = True
 
     # login
-    login = auth_sub.add_parser(
+    auth_sub.add_parser(
         "login",
         help="Authenticate with Spotify via OAuth.",
         description=(
@@ -267,7 +271,8 @@ def build_download_parser(subparsers) -> None:
             "Download one or more Spotify URLs (tracks, albums, or playlists).\n\n"
             "You may optionally pair each Spotify URL with a YouTube URL via\n"
             "--youtube-link to skip the search step. When --youtube-link is used,\n"
-            "its count must exactly match the number of Spotify URLs given.\n\n"
+            "its count must exactly match the number of Spotify track URLs given.\n"
+            "Albums and playlists are not supported with --youtube-link.\n\n"
             "Examples:\n"
             "  spotify-dl download 'spotify:track:abc123'\n\n"
             "  spotify-dl download 'url1' 'url2' \\\n"
@@ -291,7 +296,8 @@ def build_download_parser(subparsers) -> None:
         dest="youtube_links",
         help=(
             "One or more YouTube URLs to use directly, bypassing the search step. "
-            "Count must exactly match the number of Spotify URLs provided."
+            "Count must exactly match the number of Spotify track URLs provided. "
+            "Albums and playlists are not supported with this option."
         ),
     )
 
@@ -309,9 +315,15 @@ def validate_shared(args: argparse.Namespace, parser: argparse.ArgumentParser) -
     if hasattr(args, "auth_port") and args.auth_port is not None and not (1024 <= args.auth_port <= 65535):
         parser.error("--auth-port must be between 1024 and 65535.")
 
-
 def validate_download(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     validate_shared(args, parser)
+
+    source_types = set()
+    for url in args.urls:
+        source_type, _ = parse_spotify_url(url)
+        if source_type is None:
+            parser.error(f"Not a valid Spotify track, album, or playlist URL: {url}")
+        source_types.add(source_type)
 
     if args.youtube_links is not None:
         n_spotify = len(args.urls)
@@ -321,6 +333,11 @@ def validate_download(args: argparse.Namespace, parser: argparse.ArgumentParser)
                 f"Mismatched link count: {n_spotify} Spotify URL(s) provided but "
                 f"{n_youtube} YouTube URL(s) given via --youtube-link. "
                 f"Counts must match exactly."
+            )
+        if source_types & COLLECTION_SOURCE_TYPES:
+            parser.error(
+                "--youtube-link is only supported with Spotify track URLs. "
+                "Album and playlist URLs must be downloaded without --youtube-link."
             )
 
 

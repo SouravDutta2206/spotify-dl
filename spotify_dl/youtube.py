@@ -110,7 +110,7 @@ class YouTubeSearcher:
         self.verbose = verbose
 
     def build_query(self, track: TrackMetadata) -> str:
-        return f"{track.artists[0]} - {track.title} audio"
+        return f"{track.artists[0]} - {track.title} lyrics"
 
     def find_best_match(self, track: TrackMetadata) -> YouTubeMatch:
         query = self.build_query(track)
