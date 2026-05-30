@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from spotify_dl.filesystem import FileSystem
-from spotify_dl.models import AppConfig, PlaylistSummary
+from spotify_dl.models import PlaylistSummary
 from spotify_dl.source_cache import SourceCache
 from spotify_dl.sync import has_missing_track_files, run_sync
 from tests.conftest import make_track

@@ -111,7 +111,8 @@ class ConfigManager:
         if require_credentials and (not resolved_client_id or not resolved_client_secret):
             raise ConfigError(
                 "Spotify API credentials not found.\n\n"
-                "Run:  spotify-dl config set --client-id <id> --client-secret <secret>\n"
+                "Run:  spotify-dl config set client-id <id>\n"
+                "      spotify-dl config set client-secret <secret>\n"
                 "  or: set SPOTIFY_CLIENT_ID=<id> and SPOTIFY_CLIENT_SECRET=<secret>\n\n"
                 "Get your credentials at: https://developer.spotify.com/dashboard"
             )

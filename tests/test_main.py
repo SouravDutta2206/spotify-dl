@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from spotify_dl.pipeline import process_tracks
-from spotify_dl.models import AppConfig, DownloadResult
+from spotify_dl.models import DownloadResult
 from tests.conftest import make_track
 
 
@@ -20,7 +20,7 @@ def test_cli_alias_calls_main(monkeypatch):
     calls = []
     monkeypatch.setattr(main_module, "main", lambda: calls.append("main"))
 
-    main_module.cli()
+    main_module.main()
 
     assert calls == ["main"]
 
@@ -79,20 +79,8 @@ def test_download_validation_rejects_collections_when_using_youtube_link(spotify
     assert exc_info.value.code == 2
 
 
-def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(tmp_path, monkeypatch):
-    config = AppConfig(
-        spotify_client_id="id",
-        spotify_client_secret="secret",
-        spotify_user_access_token=None,
-        spotify_user_refresh_token=None,
-        spotify_user_token_expiry=None,
-        output_directory=tmp_path,
-        audio_quality="0",
-        youtube_cookie_browser=None,
-        youtube_cookie_file=None,
-        auth_callback_port=8888,
-        concurrency=5,
-    )
+def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(app_config, monkeypatch):
+    config = app_config
 
     class FakeFuture:
         def cancel(self):

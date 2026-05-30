@@ -29,6 +29,28 @@ def make_track(**overrides) -> TrackMetadata:
     return TrackMetadata(**data)
 
 
+def make_track_payload(track_id):
+    return {
+        "id": track_id,
+        "type": "track",
+        "is_local": False,
+        "external_ids": {},
+        "name": "Song",
+        "artists": [{"name": "Artist"}],
+        "track_number": 1,
+        "disc_number": 1,
+        "duration_ms": 1000,
+        "album": {
+            "id": "album",
+            "name": "Album",
+            "artists": [{"name": "Artist"}],
+            "total_tracks": 1,
+            "release_date": "2024",
+            "images": [],
+        },
+    }
+
+
 @pytest.fixture
 def app_config(tmp_path) -> AppConfig:
     return AppConfig(

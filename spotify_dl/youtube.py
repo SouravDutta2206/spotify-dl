@@ -159,24 +159,28 @@ class Downloader:
     def download_mp3(self, match: YouTubeMatch) -> Path:
         self.check_ffmpeg()
         temp_dir = Path(tempfile.mkdtemp(prefix="spotify-dl-"))
-        output_template = str(temp_dir / "%(id)s.%(ext)s")
-        options = build_yt_dlp_options(
-            mode="download",
-            config=self.config,
-            verbose=self.verbose,
-            output_template=output_template,
-        )
         try:
-            with YoutubeDL(options) as ydl:
-                ydl.download([match.youtube_url])
-        except Exception as exc:
-            message = str(exc)
-            if "age" in message.lower() and not (
-                self.config.youtube_cookie_file or self.config.youtube_cookie_browser
-            ):
-                message += "\nTip: spotify-dl config set --youtube-cookies-from chrome"
-            raise DownloadError(f"Download failed: {message}") from exc
-        files = list(temp_dir.glob("*.mp3"))
-        if not files:
-            raise DownloadError("Download failed: yt-dlp did not produce an MP3")
-        return files[0]
+            output_template = str(temp_dir / "%(id)s.%(ext)s")
+            options = build_yt_dlp_options(
+                mode="download",
+                config=self.config,
+                verbose=self.verbose,
+                output_template=output_template,
+            )
+            try:
+                with YoutubeDL(options) as ydl:
+                    ydl.download([match.youtube_url])
+            except Exception as exc:
+                message = str(exc)
+                if "age" in message.lower() and not (
+                    self.config.youtube_cookie_file or self.config.youtube_cookie_browser
+                ):
+                    message += "\nTip: spotify-dl config set youtube-cookies-from chrome"
+                raise DownloadError(f"Download failed: {message}") from exc
+            files = list(temp_dir.glob("*.mp3"))
+            if not files:
+                raise DownloadError("Download failed: yt-dlp did not produce an MP3")
+            return files[0]
+        except Exception:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise

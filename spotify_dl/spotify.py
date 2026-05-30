@@ -24,7 +24,9 @@ SPOTIFY_URI_RE = re.compile(
 )
 
 
-def parse_spotify_url(url: str) -> tuple[Literal["track", "album", "playlist"], str]:
+def parse_spotify_url(
+    url: str,
+) -> tuple[Literal["track", "album", "playlist"] | None, str | None]:
     match = SPOTIFY_URL_RE.search(url) or SPOTIFY_URI_RE.fullmatch(url)
     if not match:
         return None, None

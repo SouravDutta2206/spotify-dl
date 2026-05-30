@@ -86,11 +86,11 @@ class SourceCache:
 
 _MIME_TO_EXT: dict[str, str] = {
     "image/jpeg": ".jpg",
-    "image/jpg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
 }
 _EXT_TO_MIME: dict[str, str] = {v: k for k, v in _MIME_TO_EXT.items()}
+_MIME_TO_EXT["image/jpg"] = ".jpg"
 
 
 class CoverCache:

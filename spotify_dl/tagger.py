@@ -16,8 +16,6 @@ class Tagger:
         self.cover_resolver = CoverResolver(cover_cache)
 
     def tag(self, temp_mp3: Path, final_mp3: Path, track: TrackMetadata) -> Path:
-        final_mp3.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(temp_mp3), str(final_mp3))
         try:
             tags = ID3()
             tags.add(TIT2(encoding=1, text=track.title))
@@ -42,9 +40,11 @@ class Tagger:
                             data=art_data,
                         )
                     )
-            tags.save(final_mp3, v2_version=3)
+            tags.save(temp_mp3, v2_version=3)
         except Exception as exc:
             raise TaggingError(f"Failed to write tags: {exc}") from exc
+        final_mp3.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(temp_mp3), str(final_mp3))
         return final_mp3
 
     def _get_cover(self, track: TrackMetadata) -> tuple[bytes, str]:

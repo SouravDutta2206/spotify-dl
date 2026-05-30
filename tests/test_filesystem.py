@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from spotify_dl.filesystem import FileSystem, sanitize_component
-from spotify_dl.models import TrackMetadata
 
 from tests.conftest import make_track
 
@@ -27,4 +26,3 @@ def test_playlist_mirror_path(tmp_path):
     assert fs.get_playlist_mirror_path(track, "My Playlist") == (
         tmp_path / "My Playlist" / "A_B_ Song_.mp3"
     )
-

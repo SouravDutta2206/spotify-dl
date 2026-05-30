@@ -16,4 +16,5 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     with tmp.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
         fh.write("\n")
+        fh.flush()
     tmp.replace(path)

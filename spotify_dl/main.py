@@ -5,16 +5,34 @@ import json
 import sys
 from typing import Any
 
-from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.auth import AuthManager
-from spotify_dl.config import ConfigManager
-from spotify_dl.sync import run_sync
-from spotify_dl.pipeline import run_download
 from spotify_dl.cli_utils import spotify_client_from_options
+from spotify_dl.config import ConfigManager
+from spotify_dl.exceptions import SpotifyDlError
+from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download
+from spotify_dl.sync import run_sync
 from spotify_dl.spotify import parse_spotify_url
 
 
-COLLECTION_SOURCE_TYPES = {"album", "playlist"}
+_CONFIG_KEY_MAP: dict[str, tuple[str, ...]] = {
+    "client-id": ("spotify", "client_id"),
+    "client-secret": ("spotify", "client_secret"),
+    "output": ("output", "directory"),
+    "quality": ("output", "quality"),
+    "youtube-cookies-from": ("youtube", "cookie_browser"),
+    "youtube-cookie-browser": ("youtube", "cookie_browser"),
+    "youtube-cookie-file": ("youtube", "cookie_file"),
+    "concurrency": ("concurrency",),
+    "auth-port": ("auth", "callback_port"),
+    "auth-callback-port": ("auth", "callback_port"),
+}
+
+_CONFIG_VALIDATORS: dict[str, tuple[set[str] | None, type | None, str]] = {
+    "quality": ({"0", "128", "192", "320"}, None, "Audio quality must be one of: 0, 128, 192, 320"),
+    "concurrency": (None, int, "Concurrency must be an integer."),
+    "auth-port": (None, int, "Auth port must be an integer."),
+    "auth-callback-port": (None, int, "Auth port must be an integer."),
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -441,34 +459,26 @@ def main() -> None:
             manager = ConfigManager()
             if args.config_command == "set":
                 key = args.key.lower().replace("_", "-")
-                partial: dict[str, Any] = {}
-                if key == "client-id":
-                    partial = {"spotify": {"client_id": args.value}}
-                elif key == "client-secret":
-                    partial = {"spotify": {"client_secret": args.value}}
-                elif key == "output":
-                    partial = {"output": {"directory": args.value}}
-                elif key == "quality":
-                    if args.value not in {"0", "128", "192", "320"}:
-                        sys.exit("Error: Audio quality must be one of: 0, 128, 192, 320")
-                    partial = {"output": {"quality": args.value}}
-                elif key in ("youtube-cookies-from", "youtube-cookie-browser"):
-                    partial = {"youtube": {"cookie_browser": args.value}}
-                elif key == "youtube-cookie-file":
-                    partial = {"youtube": {"cookie_file": args.value}}
-                elif key == "concurrency":
-                    try:
-                        partial = {"concurrency": int(args.value)}
-                    except ValueError:
-                        sys.exit("Error: Concurrency must be an integer.")
-                elif key in ("auth-port", "auth-callback-port"):
-                    try:
-                        partial = {"auth": {"callback_port": int(args.value)}}
-                    except ValueError:
-                        sys.exit("Error: Auth port must be an integer.")
-                else:
+                if key not in _CONFIG_KEY_MAP:
                     sys.exit(f"Error: Unknown configuration key: {args.key}")
-                
+
+                value: Any = args.value
+                if key in _CONFIG_VALIDATORS:
+                    choices, cast, error_msg = _CONFIG_VALIDATORS[key]
+                    if choices and value not in choices:
+                        sys.exit(f"Error: {error_msg}")
+                    if cast:
+                        try:
+                            value = cast(value)
+                        except ValueError:
+                            sys.exit(f"Error: {error_msg}")
+
+                path = _CONFIG_KEY_MAP[key]
+                if len(path) == 1:
+                    partial = {path[0]: value}
+                else:
+                    partial = {path[0]: {path[1]: value}}
+
                 manager.save(partial)
                 print("Configuration saved.")
 

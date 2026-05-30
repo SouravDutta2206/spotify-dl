@@ -2,22 +2,22 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import sys
 
+from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
+from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata
 from spotify_dl.source_cache import CoverCache
 from spotify_dl.tagger import Tagger
 from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
-from spotify_dl.exceptions import SpotifyDlError
-from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
 
 
 COLLECTION_MAX_WORKERS = 10
-CONCURRENT_SOURCE_TYPES = {"album", "playlist"}
+COLLECTION_SOURCE_TYPES = {"album", "playlist"}
 
 
 class DownloadPipeline:
@@ -54,6 +54,8 @@ class DownloadPipeline:
             match = make_direct_match(youtube_url) if youtube_url else self.searcher.find_best_match(track)
             temp_path = self.downloader.download_mp3(match)
             tagged = self.tagger.tag(temp_path, final_path, track)
+            if temp_path.parent.exists():
+                shutil.rmtree(temp_path.parent, ignore_errors=True)
             self._copy_to_playlist(tagged, track)
             return DownloadResult(track, match, tagged, "done", None)
         except Exception as exc:
@@ -138,7 +140,7 @@ def process_tracks(
         playlist_name=playlist_name,
     )
 
-    if source_type not in CONCURRENT_SOURCE_TYPES or options["dry_run"] or len(tracks) <= 1:
+    if source_type not in COLLECTION_SOURCE_TYPES or options["dry_run"] or len(tracks) <= 1:
         results = []
         try:
             for index, track in enumerate(tracks, start=1):
