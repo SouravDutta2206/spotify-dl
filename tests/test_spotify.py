@@ -5,7 +5,13 @@ from datetime import datetime, timedelta, timezone
 
 from spotify_dl.config import ConfigManager
 from spotify_dl.spotify import SpotifyClient
-from spotify_dl.spotify import _iter_page_items, _playlist_track_count, parse_spotify_url, track_from_spotify
+from spotify_dl.spotify import (
+    _iter_page_items,
+    _playlist_track_count,
+    parse_spotify_url,
+    profile_from_spotify,
+    track_from_spotify,
+)
 from tests.conftest import make_track_payload
 
 
@@ -76,6 +82,30 @@ def test_user_client_refreshes_expired_token(app_config, tmp_path, monkeypatch):
 
 def test_playlist_track_count_from_summary():
     assert _playlist_track_count({"tracks": {"total": 42}}) == 42
+
+
+def test_profile_from_spotify_maps_account_fields():
+    profile = profile_from_spotify(
+        {
+            "account_id": "R6621MQqcn",
+            "country": "IN",
+            "display_name": "LOL",
+            "email": "user@example.com",
+            "explicit_content": {"filter_enabled": False, "filter_locked": False},
+            "followers": {"href": None, "total": 7},
+            "id": "spotify-user-id",
+            "product": "premium",
+        }
+    )
+
+    assert profile.display_name == "LOL"
+    assert profile.spotify_user_id == "spotify-user-id"
+    assert profile.account_type == "premium"
+    assert profile.account_id == "R6621MQqcn"
+    assert profile.country == "IN"
+    assert profile.email == "user@example.com"
+    assert profile.followers == 7
+    assert profile.explicit_filter_enabled is False
 
 
 def test_iter_page_items_follows_spotify_next_pages():

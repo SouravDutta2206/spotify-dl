@@ -52,6 +52,18 @@ class PlaylistSummary:
 
 
 @dataclass(slots=True)
+class AccountProfile:
+    display_name: str
+    spotify_user_id: str
+    account_type: str
+    account_id: str
+    country: str
+    email: str
+    followers: int
+    explicit_filter_enabled: bool
+
+
+@dataclass(slots=True)
 class YouTubeMatch:
     youtube_url: str
     video_id: str
@@ -68,4 +80,3 @@ class DownloadResult:
     final_mp3_path: Path | None
     status: Literal["done", "skipped", "failed"]
     error: str | None
-

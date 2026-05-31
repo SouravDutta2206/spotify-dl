@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from spotify_dl.models import AccountProfile
 from spotify_dl.pipeline import process_tracks
 from spotify_dl.models import DownloadResult
 from tests.conftest import make_track
@@ -23,6 +24,43 @@ def test_cli_alias_calls_main(monkeypatch):
     main_module.main()
 
     assert calls == ["main"]
+
+
+def test_profile_command_prints_account_fields(monkeypatch, capsys):
+    from spotify_dl import main as main_module
+
+    class FakeSpotify:
+        def get_current_user_profile(self):
+            return AccountProfile(
+                display_name="LOL",
+                spotify_user_id="h1cvqfami8l5l35hrohkcmt5b",
+                account_type="premium",
+                account_id="R6621MQqcn",
+                country="IN",
+                email="user@example.com",
+                followers=0,
+                explicit_filter_enabled=False,
+            )
+
+    monkeypatch.setattr("sys.argv", ["spotify-dl", "profile"])
+    monkeypatch.setattr(
+        main_module,
+        "spotify_client_from_options",
+        lambda options: (None, FakeSpotify()),
+    )
+
+    main_module.main()
+
+    assert capsys.readouterr().out.splitlines() == [
+        "Display name: LOL",
+        "Spotify user ID: h1cvqfami8l5l35hrohkcmt5b",
+        "Account type: premium",
+        "Account ID: R6621MQqcn",
+        "Country: IN",
+        "Email: user@example.com",
+        "Followers: 0",
+        "Explicit filter: False",
+    ]
 
 
 def test_download_validation_allows_mixed_sources_without_youtube_link():
@@ -225,4 +263,3 @@ def test_run_download_normalizes_options(app_config, tmp_path, monkeypatch):
     assert opts["dry_run"] is False
     assert opts["skip_existing"] is True
     assert opts["make_playlist"] is False
-

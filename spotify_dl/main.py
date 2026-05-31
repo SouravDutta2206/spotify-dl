@@ -235,6 +235,17 @@ def build_config_parser(subparsers) -> None:
 # playlists
 # ─────────────────────────────────────────────────────────────────────────────
 
+def build_profile_parser(subparsers) -> None:
+    subparsers.add_parser(
+        "profile",
+        help="Show basic Spotify account information.",
+        description=(
+            "Fetches and displays basic account information for the logged-in "
+            "Spotify user.\nRequires authentication — run `spotify-dl auth login` first."
+        ),
+    )
+
+
 def build_playlists_parser(subparsers) -> None:
     pl_parser = subparsers.add_parser(
         "playlists",
@@ -377,6 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Commands:\n"
             "  auth        Manage Spotify authentication (login / logout / status)\n"
             "  config      Manage configuration (set / show / clear / clear-cookies)\n"
+            "  profile     Show basic Spotify account information\n"
             "  playlists   List or sync library playlists (list / sync)\n"
             "  download    Download tracks, albums, or playlists by URL\n\n"
             "Run `spotify-dl <command> --help` for command-specific help."
@@ -387,6 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     build_auth_parser(subparsers)
     build_config_parser(subparsers)
+    build_profile_parser(subparsers)
     build_playlists_parser(subparsers)
     build_download_parser(subparsers)
 
@@ -416,7 +429,7 @@ def _get_subparser(
 
 def main() -> None:
     # Intercept Spotify URLs passed directly as the first argument (fallback behavior)
-    commands = {"auth", "config", "playlists", "download", "-h", "--help"}
+    commands = {"auth", "config", "profile", "playlists", "download", "-h", "--help"}
     if len(sys.argv) > 1 and sys.argv[1] not in commands and not sys.argv[1].startswith("-"):
         sys.argv.insert(1, "download")
 
@@ -505,6 +518,19 @@ def main() -> None:
                 
                 options = vars(args)
                 run_sync(options)
+
+        elif args.command == "profile":
+            options = vars(args)
+            _, spotify = spotify_client_from_options(options)
+            profile = spotify.get_current_user_profile()
+            print(f"Display name: {profile.display_name}")
+            print(f"Spotify user ID: {profile.spotify_user_id}")
+            print(f"Account type: {profile.account_type}")
+            print(f"Account ID: {profile.account_id}")
+            print(f"Country: {profile.country}")
+            print(f"Email: {profile.email}")
+            print(f"Followers: {profile.followers}")
+            print(f"Explicit filter: {profile.explicit_filter_enabled}")
 
         elif args.command == "download":
             

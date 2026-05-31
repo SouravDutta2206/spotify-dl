@@ -12,7 +12,7 @@ from spotify_dl.auth import USER_SCOPES, build_spotify_oauth
 from spotify_dl.config import ConfigManager
 from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import SpotifyError
-from spotify_dl.models import AppConfig, PlaylistSummary, TrackMetadata
+from spotify_dl.models import AccountProfile, AppConfig, PlaylistSummary, TrackMetadata
 from spotify_dl.source_cache import CoverCache, SourceCache
 
 
@@ -49,7 +49,6 @@ def _playlist_track_count(item: dict[str, Any]) -> int:
     if isinstance(tracks, dict):
         return int(tracks.get("total") or 0)
     return 0
-
 
 def _chunks(values: list[str], size: int) -> list[list[str]]:
     return [values[index : index + size] for index in range(0, len(values), size)]
@@ -237,6 +236,26 @@ class SpotifyClient:
                 )
             )
         return playlists
+
+    def get_current_user_profile(self) -> AccountProfile:
+
+        user = self._user_client()
+        try:
+            user = user.current_user()
+            explicit_content = user.get("explicit_content") or {}
+            followers = user.get("followers") or {}
+            return AccountProfile(
+                display_name=user.get("display_name") or "",
+                spotify_user_id=user.get("id") or "",
+                account_type=user.get("product") or "",
+                account_id=user.get("account_id") or "",
+                country=user.get("country") or "",
+                email=user.get("email") or "",
+                followers=int(followers.get("total") or 0),
+                explicit_filter_enabled=bool(explicit_content.get("filter_enabled")),
+            )
+        except Exception as exc:
+            raise SpotifyError("Could not fetch Spotify account profile") from exc
 
     def get_playlist_track_count(self, playlist_id: str) -> int:
         user = self._user_client()
