@@ -103,10 +103,15 @@ class SpotifyClient:
         self.cover_cache = CoverCache(_cache_dir)
         self.cover_resolver = CoverResolver(self.cover_cache)
 
-    def resolve_url(self, url: str) -> tuple[str, str, list[TrackMetadata]]:
+    def resolve_url(
+        self,
+        url: str,
+        *,
+        youtube_link: str | None = None,
+    ) -> tuple[str, str, list[TrackMetadata]]:
         kind, item_id = parse_spotify_url(url)
         if kind == "track":
-            track = self.get_track(item_id)
+            track = self.get_track(item_id, youtube_link=youtube_link)
             return kind, track.title, [track]
         if kind == "album":
             tracks = self.get_album(item_id)
@@ -122,26 +127,34 @@ class SpotifyClient:
         self._prefetch_covers(tracks)
         return kind, header["name"], tracks
 
-    def get_track(self, track_id: str) -> TrackMetadata:
+    def get_track(self, track_id: str, *, youtube_link: str | None = None) -> TrackMetadata:
+        cached = self.source_cache.read_track(track_id)
+        if cached:
+            track, cached_youtube_link = cached
+            if youtube_link is not None and youtube_link != cached_youtube_link:
+                self.source_cache.write_track(track, youtube_link=youtube_link)
+            return track
         try:
-            return track_from_spotify(self.client.track(track_id))
+            track = track_from_spotify(self.client.track(track_id))
+            self.source_cache.write_track(track, youtube_link=youtube_link)
+            return track
         except Exception as exc:
             raise SpotifyError(f"Track not found on Spotify: {track_id}") from exc
 
     def get_album(self, album_id: str) -> list[TrackMetadata]:
-        cached = self.source_cache.load(kind="album", source_id=album_id)
-        if cached:
-            return cached[1]
+        payload = self.source_cache.read_collection("album", album_id)
+        if payload:
+            return [TrackMetadata(**track) for track in payload.get("tracks", [])]
         try:
             album = self.client.album(album_id)
             tracks = list(_iter_page_items(self.client, album["tracks"]))
             full_tracks = [self.client.track(track["id"]) for track in tracks if track.get("id")]
             metadata = [track_from_spotify(track, album) for track in full_tracks]
-            self.source_cache.save(
-                kind="album",
-                source_id=album_id,
-                source_name=album.get("name") or album_id,
-                tracks=metadata,
+            self.source_cache.write_collection(
+                "album",
+                album_id,
+                album.get("name") or album_id,
+                metadata,
             )
             return metadata
         except Exception as exc:
@@ -164,13 +177,9 @@ class SpotifyClient:
                 header = self.get_playlist_header(playlist_id)
                 snapshot_id = header.get("snapshot_id")
                 playlist_name = header.get("name")
-            cached = self.source_cache.load(
-                kind="playlist",
-                source_id=playlist_id,
-                snapshot_id=snapshot_id,
-            )
-            if cached:
-                return cached[1]
+            payload = self.source_cache.read_collection("playlist", playlist_id)
+            if payload and (snapshot_id is None or payload.get("snapshot_id") == snapshot_id):
+                return [TrackMetadata(**track) for track in payload.get("tracks", [])]
             page = client.playlist_items(playlist_id, limit=100, offset=0)
             tracks: list[TrackMetadata] = []
             for item in _iter_page_items(client, page):
@@ -183,12 +192,12 @@ class SpotifyClient:
                 ):
                     continue
                 tracks.append(track_from_spotify(track))
-            self.source_cache.save(
-                kind="playlist",
-                source_id=playlist_id,
-                source_name=playlist_name or playlist_id,
+            self.source_cache.write_collection(
+                "playlist",
+                playlist_id,
+                playlist_name or playlist_id,
+                tracks,
                 snapshot_id=snapshot_id,
-                tracks=tracks,
             )
             return tracks
         except SpotifyError:

@@ -9,7 +9,6 @@ from spotify_dl.spotify import (
     _iter_page_items,
     _playlist_track_count,
     parse_spotify_url,
-    profile_from_spotify,
     track_from_spotify,
 )
 from tests.conftest import make_track_payload
@@ -84,19 +83,24 @@ def test_playlist_track_count_from_summary():
     assert _playlist_track_count({"tracks": {"total": 42}}) == 42
 
 
-def test_profile_from_spotify_maps_account_fields():
-    profile = profile_from_spotify(
-        {
-            "account_id": "R6621MQqcn",
-            "country": "IN",
-            "display_name": "LOL",
-            "email": "user@example.com",
-            "explicit_content": {"filter_enabled": False, "filter_locked": False},
-            "followers": {"href": None, "total": 7},
-            "id": "spotify-user-id",
-            "product": "premium",
-        }
-    )
+def test_get_current_user_profile_maps_account_fields(app_config, tmp_path):
+    class FakeUserClient:
+        def current_user(self):
+            return {
+                "account_id": "R6621MQqcn",
+                "country": "IN",
+                "display_name": "LOL",
+                "email": "user@example.com",
+                "explicit_content": {"filter_enabled": False, "filter_locked": False},
+                "followers": {"href": None, "total": 7},
+                "id": "spotify-user-id",
+                "product": "premium",
+            }
+
+    client = SpotifyClient(app_config, cache_dir=tmp_path / "cache")
+    client._user_client = lambda: FakeUserClient()  # type: ignore[method-assign]
+
+    profile = client.get_current_user_profile()
 
     assert profile.display_name == "LOL"
     assert profile.spotify_user_id == "spotify-user-id"
@@ -210,12 +214,12 @@ def test_get_playlist_accepts_spotify_item_shape(app_config, tmp_path):
 
 def test_get_playlist_uses_cache_when_snapshot_unchanged(app_config, tmp_path):
     client = SpotifyClient(app_config, cache_dir=tmp_path / "cache")
-    client.source_cache.save(
-        kind="playlist",
-        source_id="playlist-id",
-        source_name="Playlist",
+    client.source_cache.write_collection(
+        "playlist",
+        "playlist-id",
+        "Playlist",
+        [track_from_spotify(make_track_payload("track-id"))],
         snapshot_id="snap",
-        tracks=[track_from_spotify(make_track_payload("track-id"))],
     )
 
     class FakeUserClient:
@@ -237,17 +241,31 @@ def test_get_album_uses_cache(app_config, tmp_path):
         spotify_user_token_expiry=None,
     )
     client = SpotifyClient(config, cache_dir=tmp_path / "cache")
-    client.source_cache.save(
-        kind="album",
-        source_id="album-id",
-        source_name="Album",
-        tracks=[track_from_spotify(make_track_payload("track-id"))],
+    client.source_cache.write_collection(
+        "album",
+        "album-id",
+        "Album",
+        [track_from_spotify(make_track_payload("track-id"))],
     )
     client.client.album = lambda album_id: (_ for _ in ()).throw(
         AssertionError("album should not be fetched when cached")
     )
 
     assert client.get_album("album-id")[0].spotify_id == "track-id"
+
+
+def test_get_track_uses_cache_and_updates_youtube_link(app_config, tmp_path):
+    client = SpotifyClient(app_config, cache_dir=tmp_path / "cache")
+    client.source_cache.write_track(track_from_spotify(make_track_payload("track-id")))
+    client.client.track = lambda track_id: (_ for _ in ()).throw(
+        AssertionError("track should not be fetched when cached")
+    )
+
+    track = client.get_track("track-id", youtube_link="https://youtube.com/watch?v=abc")
+
+    assert track.spotify_id == "track-id"
+    cached = client.source_cache.read_track("track-id")
+    assert cached is not None and cached[1] == "https://youtube.com/watch?v=abc"
 
 
 def test_get_tracks_batches_spotify_requests(app_config, tmp_path):

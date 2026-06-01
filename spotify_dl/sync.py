@@ -28,7 +28,7 @@ def has_missing_track_files(
 def run_sync(options: dict) -> None:
     download_options = normalize_download_options(options, force_skip_existing=True)
     config, spotify = spotify_client_from_options(download_options)
-    cached_playlists = list(spotify.source_cache.iter_cached_playlists())
+    cached_playlists = list(spotify.source_cache.iter_playlists())
     if not cached_playlists:
         print("No cached playlists found.")
         return
@@ -56,7 +56,7 @@ def _sync_playlist(
     download_options: dict,
     make_playlist: bool,
 ) -> None:
-    payload = spotify.source_cache.read_playlist_payload(playlist_id)
+    payload = spotify.source_cache.read_collection("playlist", playlist_id)
     if payload is None:
         print(f"  Skipping invalid cache: {playlist_id}")
         return
@@ -79,15 +79,7 @@ def _sync_playlist(
             playlist_name=playlist_name,
         )
     else:
-        cached = spotify.source_cache.load(
-            kind="playlist",
-            source_id=playlist_id,
-            snapshot_id=current_snapshot,
-        )
-        if cached is None:
-            print(f"  Error ({playlist_name}): could not load cached tracks", file=sys.stderr)
-            return
-        tracks = cached[1]
+        tracks = [TrackMetadata(**track) for track in payload.get("tracks", [])]
 
     needs_download = snapshot_changed or has_missing_track_files(
         filesystem,

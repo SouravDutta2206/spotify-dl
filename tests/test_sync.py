@@ -41,12 +41,12 @@ def test_run_sync_skips_when_up_to_date(tmp_path, monkeypatch, app_config):
     cache_dir = tmp_path / "cache"
     cache = SourceCache(cache_dir)
     track = make_track(spotify_id="track-id")
-    cache.save(
-        kind="playlist",
-        source_id="playlist-id",
-        source_name="Playlist",
+    cache.write_collection(
+        "playlist",
+        "playlist-id",
+        "Playlist",
+        [track],
         snapshot_id="snap",
-        tracks=[track],
     )
     path = FileSystem(tmp_path).get_track_path(track)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,12 +76,12 @@ def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch, app_config
     cache_dir = tmp_path / "cache"
     cache = SourceCache(cache_dir)
     track = make_track(spotify_id="track-id")
-    cache.save(
-        kind="playlist",
-        source_id="playlist-id",
-        source_name="Playlist",
+    cache.write_collection(
+        "playlist",
+        "playlist-id",
+        "Playlist",
+        [track],
         snapshot_id="old-snap",
-        tracks=[track],
     )
 
     config = app_config
@@ -117,12 +117,12 @@ def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch, app_config
     cache_dir = tmp_path / "cache"
     cache = SourceCache(cache_dir)
     track = make_track(spotify_id="track-id")
-    cache.save(
-        kind="playlist",
-        source_id="playlist-id",
-        source_name="Playlist",
+    cache.write_collection(
+        "playlist",
+        "playlist-id",
+        "Playlist",
+        [track],
         snapshot_id="snap",
-        tracks=[track],
     )
 
     config = app_config

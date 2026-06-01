@@ -12,6 +12,7 @@ from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata
 from spotify_dl.source_cache import CoverCache
+from spotify_dl.spotify import SpotifyClient
 from spotify_dl.tagger import Tagger
 from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
 
@@ -78,10 +79,14 @@ def run_download(url: str, options: dict) -> None:
     """Resolve a Spotify URL and download all tracks."""
     download_options = normalize_download_options(options)
     config, spotify = spotify_client_from_options(download_options)
-    source_type, source_name, tracks = spotify.resolve_url(url)
     youtube_link = download_options.get("youtube_link")
+    source_type, source_name, tracks = spotify.resolve_url(url, youtube_link=youtube_link)
     if youtube_link and source_type != "track":
         raise SpotifyDlError("--youtube-link can only be used with a single Spotify track URL.")
+    if source_type == "track" and youtube_link is None and tracks and isinstance(spotify, SpotifyClient):
+        cached = spotify.source_cache.read_track(tracks[0].spotify_id)
+        youtube_link = cached[1] if cached else None
+        download_options["youtube_link"] = youtube_link
     download_tracks(
         config=config,
         source_type=source_type,
@@ -200,4 +205,3 @@ def print_track_result(index: int, total: int, result: DownloadResult) -> None:
     print(f"  [{index}/{total}] {result.track.title} ... {marker}")
     if result.error:
         print(f"      {result.error}", file=sys.stderr)
-

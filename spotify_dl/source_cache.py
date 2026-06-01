@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import datetime, timezone
 from collections.abc import Iterator
 from pathlib import Path
@@ -11,31 +10,47 @@ from spotify_dl.json_io import read_json, write_json_atomic
 from spotify_dl.models import TrackMetadata
 
 SourceKind = Literal["album", "playlist"]
+_TRACK_FIELDS = frozenset(f.name for f in fields(TrackMetadata))
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class SourceCache:
     def __init__(self, cache_directory: Path) -> None:
         self.cache_directory = cache_directory.expanduser()
+        self._tracks: dict[str, Any] = self._load_tracks_file()
 
-    def load(
-        self,
-        *,
-        kind: SourceKind,
-        source_id: str,
-        snapshot_id: str | None = None,
-    ) -> tuple[str, list[TrackMetadata]] | None:
-        path = self._path(kind, source_id)
-        payload = self._read_payload(path, kind=kind, source_id=source_id)
-        if payload is None:
+    def read_track(self, spotify_id: str) -> tuple[TrackMetadata, str | None] | None:
+        entry = self._tracks.get(spotify_id)
+        if not isinstance(entry, dict):
             return None
-        if kind == "playlist" and payload.get("snapshot_id") != snapshot_id:
-            return None
-        tracks = [TrackMetadata(**track) for track in payload.get("tracks", [])]
-        return payload.get("source_name") or source_id, tracks
+        track_data = {k: v for k, v in entry.items() if k in _TRACK_FIELDS}
+        return TrackMetadata(**track_data), entry.get("youtube-link")
 
-    def save(
+    def write_track(self, track: TrackMetadata, youtube_link: str | None = None) -> None:
+        old_link = self._tracks.get(track.spotify_id, {}).get("youtube-link")
+        entry = asdict(track)
+        entry["youtube-link"] = youtube_link if youtube_link is not None else old_link
+        entry["cached_at"] = _utc_now()
+        self._tracks[track.spotify_id] = entry
+        payload = {
+            "kind": "tracks",
+            "cached_at": entry["cached_at"],
+            "tracks": self._tracks,
+        }
+        write_json_atomic(self.cache_directory / "tracks.json", payload)
+
+    def read_collection(self, kind: SourceKind, source_id: str) -> dict[str, Any] | None:
+        path = self.cache_directory / f"{kind}-{source_id}.json"
+        payload = read_json(path)
+        if payload and payload.get("kind") == kind and payload.get("source_id") == source_id:
+            return payload
+        return None
+
+    def write_collection(
         self,
-        *,
         kind: SourceKind,
         source_id: str,
         source_name: str,
@@ -48,13 +63,12 @@ class SourceCache:
             "source_id": source_id,
             "source_name": source_name,
             "snapshot_id": snapshot_id,
-            "cached_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "cached_at": _utc_now(),
             "tracks": [asdict(track) for track in tracks],
         }
-        path = self._path(kind, source_id)
-        write_json_atomic(path, payload)
+        write_json_atomic(self.cache_directory / f"{kind}-{source_id}.json", payload)
 
-    def iter_cached_playlists(self) -> Iterator[tuple[str, Path]]:
+    def iter_playlists(self) -> Iterator[tuple[str, Path]]:
         if not self.cache_directory.exists():
             return
         for path in sorted(self.cache_directory.glob("playlist-*.json")):
@@ -62,26 +76,11 @@ class SourceCache:
             if source_id:
                 yield source_id, path
 
-    def read_playlist_payload(self, source_id: str) -> dict[str, Any] | None:
-        path = self._path("playlist", source_id)
-        return self._read_payload(path, kind="playlist", source_id=source_id)
-
-    def _read_payload(
-        self, path: Path, *, kind: SourceKind, source_id: str
-    ) -> dict[str, Any] | None:
-        """Read and validate a cache JSON file. Returns None on any error or mismatch."""
-        if not path.exists():
-            return None
-        try:
-            payload = read_json(path)
-        except json.JSONDecodeError:
-            return None
-        if payload.get("kind") != kind or payload.get("source_id") != source_id:
-            return None
-        return payload
-
-    def _path(self, kind: SourceKind, source_id: str) -> Path:
-        return self.cache_directory / f"{kind}-{source_id}.json"
+    def _load_tracks_file(self) -> dict[str, Any]:
+        payload = read_json(self.cache_directory / "tracks.json")
+        if payload and payload.get("kind") == "tracks" and isinstance(payload.get("tracks"), dict):
+            return payload["tracks"]
+        return {}
 
 
 _MIME_TO_EXT: dict[str, str] = {
