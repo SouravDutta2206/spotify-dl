@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -10,7 +11,6 @@ from spotipy.oauth2 import SpotifyClientCredentials
 
 from spotify_dl.auth import USER_SCOPES, build_spotify_oauth
 from spotify_dl.config import ConfigManager
-from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import SpotifyError
 from spotify_dl.models import AccountProfile, AppConfig, PlaylistSummary, TrackMetadata
 from spotify_dl.source_cache import CoverCache, SourceCache
@@ -32,17 +32,14 @@ def parse_spotify_url(
         return None, None
     return match.group("kind"), match.group("id")
 
-
 def _best_image(images: list[dict[str, Any]]) -> str:
     if not images:
         return ""
     return max(images, key=lambda image: image.get("height") or 0).get("url", "")
 
-
 def _album_total_discs(album: dict[str, Any], tracks: list[dict[str, Any]] | None = None) -> int:
     candidates = tracks or album.get("tracks", {}).get("items", [])
     return max([item.get("disc_number", 1) for item in candidates] or [1])
-
 
 def _playlist_track_count(item: dict[str, Any]) -> int:
     tracks = item.get("tracks") or {}
@@ -50,17 +47,12 @@ def _playlist_track_count(item: dict[str, Any]) -> int:
         return int(tracks.get("total") or 0)
     return 0
 
-def _chunks(values: list[str], size: int) -> list[list[str]]:
-    return [values[index : index + size] for index in range(0, len(values), size)]
-
-
 def _iter_page_items(client, page: dict[str, Any]):
     while True:
         yield from page.get("items", [])
         if not page.get("next"):
             break
         page = client.next(page)
-
 
 def track_from_spotify(track: dict[str, Any], album_override: dict[str, Any] | None = None) -> TrackMetadata:
     album = album_override or track["album"]
@@ -83,7 +75,6 @@ def track_from_spotify(track: dict[str, Any], album_override: dict[str, Any] | N
         album_genres=album.get("genres") or [],
     )
 
-
 class SpotifyClient:
     def __init__(
         self,
@@ -93,29 +84,29 @@ class SpotifyClient:
     ) -> None:
         self.config = config
         self.config_manager = config_manager
-        auth_manager = SpotifyClientCredentials(
-            client_id=config.spotify_client_id,
-            client_secret=config.spotify_client_secret,
+        self._public_sp = spotipy.Spotify(
+            auth_manager=SpotifyClientCredentials(
+                client_id=config.spotify_client_id,
+                client_secret=config.spotify_client_secret,
+            ),
+            requests_timeout=20,
+            retries=3,
         )
-        self.client = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=20, retries=3)
+        self._user_sp: spotipy.Spotify | None = None
         _cache_dir = (cache_dir or Path.home() / ".spotify-dl" / "cache").expanduser()
         self.source_cache = SourceCache(_cache_dir)
         self.cover_cache = CoverCache(_cache_dir)
-        self.cover_resolver = CoverResolver(self.cover_cache)
 
     def resolve_url(
         self,
         url: str,
-        *,
-        youtube_link: str | None = None,
     ) -> tuple[str, str, list[TrackMetadata]]:
         kind, item_id = parse_spotify_url(url)
         if kind == "track":
-            track = self.get_track(item_id, youtube_link=youtube_link)
+            track = self.get_track(item_id)
             return kind, track.title, [track]
         if kind == "album":
             tracks = self.get_album(item_id)
-            self._prefetch_covers(tracks)
             name = tracks[0].album_name if tracks else "Album"
             return kind, name, tracks
         header = self.get_playlist_header(item_id)
@@ -124,19 +115,16 @@ class SpotifyClient:
             snapshot_id=header.get("snapshot_id"),
             playlist_name=header.get("name"),
         )
-        self._prefetch_covers(tracks)
         return kind, header["name"], tracks
 
-    def get_track(self, track_id: str, *, youtube_link: str | None = None) -> TrackMetadata:
+    def get_track(self, track_id: str) -> TrackMetadata:
         cached = self.source_cache.read_track(track_id)
         if cached:
-            track, cached_youtube_link = cached
-            if youtube_link is not None and youtube_link != cached_youtube_link:
-                self.source_cache.write_track(track, youtube_link=youtube_link)
+            track, _ = cached
             return track
         try:
-            track = track_from_spotify(self.client.track(track_id))
-            self.source_cache.write_track(track, youtube_link=youtube_link)
+            track = track_from_spotify(self._api().track(track_id))
+            self.source_cache.write_track(track)
             return track
         except Exception as exc:
             raise SpotifyError(f"Track not found on Spotify: {track_id}") from exc
@@ -146,10 +134,17 @@ class SpotifyClient:
         if payload:
             return [TrackMetadata(**track) for track in payload.get("tracks", [])]
         try:
-            album = self.client.album(album_id)
-            tracks = list(_iter_page_items(self.client, album["tracks"]))
-            full_tracks = [self.client.track(track["id"]) for track in tracks if track.get("id")]
-            metadata = [track_from_spotify(track, album) for track in full_tracks]
+            api = self._api()
+            album = api.album(album_id)
+            track_items = list(_iter_page_items(api, album["tracks"]))
+            track_ids = [item["id"] for item in track_items if item.get("id")]
+            with ThreadPoolExecutor(max_workers=min(10, len(track_ids) or 1)) as pool:
+                full_tracks = list(pool.map(api.track, track_ids))
+            metadata = [
+                track_from_spotify(track, album)
+                for track in full_tracks
+                if track
+            ]
             self.source_cache.write_collection(
                 "album",
                 album_id,
@@ -161,8 +156,7 @@ class SpotifyClient:
             raise SpotifyError(f"Album not found on Spotify: {album_id}") from exc
 
     def get_playlist_header(self, playlist_id: str) -> dict[str, Any]:
-        client = self._playlist_client()
-        return client.playlist(playlist_id, fields="id,name,snapshot_id,tracks(total),external_urls")
+        return self._api().playlist(playlist_id, fields="id,name,snapshot_id,tracks(total),external_urls")
 
     def get_playlist(
         self,
@@ -172,7 +166,7 @@ class SpotifyClient:
         playlist_name: str | None = None,
     ) -> list[TrackMetadata]:
         try:
-            client = self._playlist_client()
+            api = self._api()
             if snapshot_id is None or playlist_name is None:
                 header = self.get_playlist_header(playlist_id)
                 snapshot_id = header.get("snapshot_id")
@@ -180,9 +174,9 @@ class SpotifyClient:
             payload = self.source_cache.read_collection("playlist", playlist_id)
             if payload and (snapshot_id is None or payload.get("snapshot_id") == snapshot_id):
                 return [TrackMetadata(**track) for track in payload.get("tracks", [])]
-            page = client.playlist_items(playlist_id, limit=100, offset=0)
+            page = api.playlist_items(playlist_id, limit=100, offset=0)
             tracks: list[TrackMetadata] = []
-            for item in _iter_page_items(client, page):
+            for item in _iter_page_items(api, page):
                 track = (item.get("track") or item.get("item")) if item else None
                 if (
                     not track
@@ -205,26 +199,11 @@ class SpotifyClient:
         except Exception as exc:
             raise SpotifyError(f"Playlist not found on Spotify: {playlist_id}") from exc
 
-    def _prefetch_covers(self, tracks: list[TrackMetadata]) -> None:
-        self.cover_resolver.prefetch(tracks)
-
-    def get_tracks(self, track_ids: list[str], client: spotipy.Spotify | None = None) -> list[TrackMetadata]:
-        spotify_client = client or self.client
-        tracks: list[TrackMetadata] = []
-        for chunk in _chunks(track_ids, 50):
-            response = spotify_client.tracks(chunk)
-            tracks.extend(
-                track_from_spotify(track)
-                for track in response.get("tracks", [])
-                if track and track.get("id")
-            )
-        return tracks
-
     def list_user_playlists(self) -> list[PlaylistSummary]:
-        user = self._user_client()
+        api = self._api(require_user=True)
         playlists: list[PlaylistSummary] = []
-        page = user.current_user_playlists(limit=50)
-        for item in _iter_page_items(user, page):
+        page = api.current_user_playlists(limit=50)
+        for item in _iter_page_items(api, page):
             visibility = (
                 "collaborative"
                 if item.get("collaborative")
@@ -247,10 +226,9 @@ class SpotifyClient:
         return playlists
 
     def get_current_user_profile(self) -> AccountProfile:
-
-        user = self._user_client()
+        api = self._api(require_user=True)
         try:
-            user = user.current_user()
+            user = api.current_user()
             explicit_content = user.get("explicit_content") or {}
             followers = user.get("followers") or {}
             return AccountProfile(
@@ -267,29 +245,37 @@ class SpotifyClient:
             raise SpotifyError("Could not fetch Spotify account profile") from exc
 
     def get_playlist_track_count(self, playlist_id: str) -> int:
-        user = self._user_client()
+        api = self._api(require_user=True)
         try:
-            page = user.playlist_items(playlist_id, limit=1, offset=0, fields="total")
+            page = api.playlist_items(playlist_id, limit=1, offset=0, fields="total")
             return int(page.get("total") or 0)
         except Exception:
             pass
         try:
-            header = user.playlist(playlist_id, fields="tracks(total)")
+            header = api.playlist(playlist_id, fields="tracks(total)")
             return int(((header.get("tracks") or {}).get("total")) or 0)
         except Exception:
             return 0
 
-    def _user_client(self) -> spotipy.Spotify:
-        if token_expires_soon(self.config.spotify_user_token_expiry):
-            self._refresh_user_token()
-        if not self.config.spotify_user_access_token:
-            raise SpotifyError("Run spotify-dl auth login first")
-        return spotipy.Spotify(auth=self.config.spotify_user_access_token)
-
-    def _playlist_client(self) -> spotipy.Spotify:
+    def _api(self, *, require_user: bool = False) -> spotipy.Spotify:
+        """Return the best available client. User-auth preferred when available."""
         if self.config.spotify_user_access_token or self.config.spotify_user_refresh_token:
-            return self._user_client()
-        return self.client
+            expiry = self.config.spotify_user_token_expiry
+            token_expires_soon = (
+                expiry is None
+                or expiry <= datetime.now(timezone.utc) + timedelta(minutes=5)
+            )
+            if token_expires_soon:
+                self._refresh_user_token()
+                self._user_sp = None
+            if self._user_sp is None:
+                if not self.config.spotify_user_access_token:
+                    raise SpotifyError("Run spotify-dl auth login first")
+                self._user_sp = spotipy.Spotify(auth=self.config.spotify_user_access_token)
+            return self._user_sp
+        if require_user:
+            raise SpotifyError("Run spotify-dl auth login first")
+        return self._public_sp
 
     def _refresh_user_token(self) -> None:
         if not self.config.spotify_user_refresh_token:
@@ -309,9 +295,3 @@ class SpotifyClient:
         self.config.spotify_user_access_token = token_info["access_token"]
         self.config.spotify_user_refresh_token = refresh_token
         self.config.spotify_user_token_expiry = expiry
-
-
-def token_expires_soon(expires_at: datetime | None) -> bool:
-    if expires_at is None:
-        return True
-    return expires_at <= datetime.now(timezone.utc) + timedelta(minutes=5)
