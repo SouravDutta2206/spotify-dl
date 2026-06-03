@@ -19,7 +19,7 @@ from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
 
 
 COLLECTION_MAX_WORKERS = 10
-COLLECTION_SOURCE_TYPES = {"album", "playlist"}
+COLLECTION_SOURCE_TYPES = {"album", "playlist", "batch"}
 
 
 class DownloadPipeline:
@@ -171,7 +171,8 @@ def process_tracks(
         return results
 
     workers = min(max(1, int(config.concurrency)), COLLECTION_MAX_WORKERS, len(tracks))
-    print(f"  Processing {source_type} with {workers} concurrent workers.\n")
+    if source_type != "batch":
+        print(f"  Processing {source_type} with {workers} concurrent workers.\n")
     results: list[DownloadResult] = []
     completed = 0
     executor = ThreadPoolExecutor(max_workers=workers)
@@ -213,3 +214,37 @@ def print_track_result(index: int, total: int, result: DownloadResult) -> None:
     print(f"  [{index}/{total}] {result.track.title} ... {marker}")
     if result.error:
         print(f"      {result.error}", file=sys.stderr)
+
+
+def run_batch_download(urls: list[str], options: dict) -> None:
+    """Batch-resolve track URLs, then download."""
+    download_options = normalize_download_options(options)
+    config, spotify = spotify_client_from_options(download_options)
+
+    track_ids = []
+    for url in urls:
+        _, item_id = parse_spotify_url(url)
+        if item_id:
+            track_ids.append(item_id)
+
+    print(f"\n  Batch resolving {len(track_ids)} tracks...")
+
+    try:
+        tracks = spotify.batch_resolve_tracks(track_ids)
+    except SpotifyError as exc:
+        # Fallback: user not authenticated or API error
+        print(f"  Batch resolve failed ({exc}), falling back to per-track resolution...")
+        for url in urls:
+            run_download(url, options)
+        return
+
+    CoverResolver(spotify.cover_cache).prefetch(tracks)
+
+    download_tracks(
+        config=config,
+        source_type="batch",
+        source_name="Batch Download",
+        tracks=tracks,
+        options=download_options,
+        cover_cache=spotify.cover_cache,
+    )

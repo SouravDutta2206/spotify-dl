@@ -23,6 +23,7 @@ SPOTIFY_URI_RE = re.compile(
     r"spotify:(?P<kind>track|album|playlist):(?P<id>[A-Za-z0-9]+)"
 )
 
+BATCH_TRACK_THRESHOLD = 10
 
 def parse_spotify_url(
     url: str,
@@ -295,3 +296,62 @@ class SpotifyClient:
         self.config.spotify_user_access_token = token_info["access_token"]
         self.config.spotify_user_refresh_token = refresh_token
         self.config.spotify_user_token_expiry = expiry
+
+    def create_temp_playlist(self, track_ids: list[str]) -> str:
+        api = self._api(require_user=True)
+        playlist_payload = {
+            "name": "_spotify-dl-temp",
+            "public": False,
+            "description": "Temporary playlist created by spotify-dl for batch track metadata resolution."
+        }
+        playlist = api._post("me/playlists", payload=playlist_payload)
+        playlist_id = playlist.get('id')
+
+        # Add tracks in chunks of 100
+        track_uris = [f"spotify:track:{tid}" for tid in track_ids]
+        for i in range(0, len(track_uris), 100):
+            chunk = track_uris[i:i + 100]
+            api.playlist_add_items(playlist_id=playlist_id, items=chunk)
+
+        return playlist_id
+
+    def delete_playlist(self, playlist_id: str) -> None:
+        api = self._api(require_user=True)
+        api._delete(f"/playlists/{playlist_id}/followers")
+
+    def batch_resolve_tracks(self, track_ids: list[str]) -> list[TrackMetadata]:
+        # 1. Check source cache
+        cached: dict[str, TrackMetadata] = {}
+        uncached_ids: list[str] = []
+        for tid in track_ids:
+            result = self.source_cache.read_track(tid)
+            if result:
+                cached[tid] = result[0]
+            else:
+                uncached_ids.append(tid)
+
+        if not uncached_ids:
+            return [cached[tid] for tid in track_ids]
+
+        # 2. Below threshold -> per-track fallback
+        if len(uncached_ids) <= BATCH_TRACK_THRESHOLD:
+            for tid in uncached_ids:
+                cached[tid] = self.get_track(tid)
+            return [cached[tid] for tid in track_ids]
+
+        # 3. Batch via temp playlist — reuse get_playlist() for paginated fetch
+        playlist_id = self.create_temp_playlist(uncached_ids)
+        try:
+            tracks = self.get_playlist(
+                playlist_id,
+                snapshot_id="temp",
+                playlist_name="_spotify-dl-temp",
+            )
+        finally:
+            self.delete_playlist(playlist_id)
+
+        for track in tracks:
+            self.source_cache.write_track(track)
+            cached[track.spotify_id] = track
+
+        return [cached[tid] for tid in track_ids if tid in cached]

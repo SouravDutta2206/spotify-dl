@@ -9,9 +9,9 @@ from spotify_dl.auth import AuthManager
 from spotify_dl.cli_utils import spotify_client_from_options
 from spotify_dl.config import ConfigManager
 from spotify_dl.exceptions import SpotifyDlError
-from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download
+from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download, run_batch_download
 from spotify_dl.sync import run_sync
-from spotify_dl.spotify import parse_spotify_url
+from spotify_dl.spotify import BATCH_TRACK_THRESHOLD, parse_spotify_url
 
 
 _CONFIG_KEY_MAP: dict[str, tuple[str, ...]] = {
@@ -540,10 +540,27 @@ def main() -> None:
                     opts["youtube_link"] = yt_link
                     run_download(spotify_url, opts)
             else:
-                for spotify_url in args.urls:
-                    opts = dict(vars(args))
-                    opts["youtube_link"] = None
-                    run_download(spotify_url, opts)
+                track_urls = []
+                collection_urls = []
+                for url in args.urls:
+                    kind, _ = parse_spotify_url(url)
+                    if kind == "track":
+                        track_urls.append(url)
+                    else:
+                        collection_urls.append(url)
+
+                opts = dict(vars(args))
+                opts["youtube_link"] = None
+
+                if len(track_urls) > BATCH_TRACK_THRESHOLD:
+                    run_batch_download(track_urls, opts)
+                else:
+                    for url in track_urls:
+                        run_download(url, opts)
+
+                for url in collection_urls:
+                    run_download(url, opts)
+
 
     except SpotifyDlError as exc:
         print(f"Error: {exc}", file=sys.stderr)
