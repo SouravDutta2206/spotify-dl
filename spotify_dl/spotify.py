@@ -23,7 +23,7 @@ SPOTIFY_URI_RE = re.compile(
     r"spotify:(?P<kind>track|album|playlist):(?P<id>[A-Za-z0-9]+)"
 )
 
-BATCH_TRACK_THRESHOLD = 10
+BATCH_TRACK_THRESHOLD = 5
 
 def parse_spotify_url(
     url: str,
@@ -187,13 +187,14 @@ class SpotifyClient:
                 ):
                     continue
                 tracks.append(track_from_spotify(track))
-            self.source_cache.write_collection(
-                "playlist",
-                playlist_id,
-                playlist_name or playlist_id,
-                tracks,
-                snapshot_id=snapshot_id,
-            )
+            if snapshot_id != 'temp':
+                self.source_cache.write_collection(
+                    "playlist",
+                    playlist_id,
+                    playlist_name or playlist_id,
+                    tracks,
+                    snapshot_id=snapshot_id,
+                )
             return tracks
         except SpotifyError:
             raise
@@ -297,29 +298,8 @@ class SpotifyClient:
         self.config.spotify_user_refresh_token = refresh_token
         self.config.spotify_user_token_expiry = expiry
 
-    def create_temp_playlist(self, track_ids: list[str]) -> str:
-        api = self._api(require_user=True)
-        playlist_payload = {
-            "name": "_spotify-dl-temp",
-            "public": False,
-            "description": "Temporary playlist created by spotify-dl for batch track metadata resolution."
-        }
-        playlist = api._post("me/playlists", payload=playlist_payload)
-        playlist_id = playlist.get('id')
-
-        # Add tracks in chunks of 100
-        track_uris = [f"spotify:track:{tid}" for tid in track_ids]
-        for i in range(0, len(track_uris), 100):
-            chunk = track_uris[i:i + 100]
-            api.playlist_add_items(playlist_id=playlist_id, items=chunk)
-
-        return playlist_id
-
-    def delete_playlist(self, playlist_id: str) -> None:
-        api = self._api(require_user=True)
-        api._delete(f"/playlists/{playlist_id}/followers")
-
     def batch_resolve_tracks(self, track_ids: list[str]) -> list[TrackMetadata]:
+        """Resolve many track IDs efficiently via a temporary playlist."""
         # 1. Check source cache
         cached: dict[str, TrackMetadata] = {}
         uncached_ids: list[str] = []
@@ -333,22 +313,30 @@ class SpotifyClient:
         if not uncached_ids:
             return [cached[tid] for tid in track_ids]
 
-        # 2. Below threshold -> per-track fallback
+        # 2. Below threshold → per-track fallback
         if len(uncached_ids) <= BATCH_TRACK_THRESHOLD:
             for tid in uncached_ids:
                 cached[tid] = self.get_track(tid)
             return [cached[tid] for tid in track_ids]
 
-        # 3. Batch via temp playlist — reuse get_playlist() for paginated fetch
-        playlist_id = self.create_temp_playlist(uncached_ids)
+        # 3. Create temp playlist, fetch metadata via get_playlist(), then delete
+        api = self._api(require_user=True)
+        playlist = api._post("me/playlists", payload={
+            "name": "_spotify-dl-temp",
+            "public": False,
+            "description": "Temporary playlist for spotify-dl batch resolution.",
+        })
+        playlist_id = playlist["id"]
         try:
+            uris = [f"spotify:track:{tid}" for tid in uncached_ids]
+            for i in range(0, len(uris), 100):
+                api.playlist_add_items(playlist_id, uris[i:i + 100])
+
             tracks = self.get_playlist(
-                playlist_id,
-                snapshot_id="temp",
-                playlist_name="_spotify-dl-temp",
+                playlist_id, snapshot_id="temp", playlist_name="_spotify-dl-temp",
             )
         finally:
-            self.delete_playlist(playlist_id)
+            api._delete(f"/playlists/{playlist_id}/followers")
 
         for track in tracks:
             self.source_cache.write_track(track)

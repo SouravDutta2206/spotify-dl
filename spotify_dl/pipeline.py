@@ -9,7 +9,7 @@ from pathlib import Path
 
 from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
 from spotify_dl.cover_art import CoverResolver
-from spotify_dl.exceptions import SpotifyDlError, SpotifyError
+from spotify_dl.exceptions import SpotifyError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata
 from spotify_dl.source_cache import CoverCache
@@ -19,7 +19,7 @@ from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
 
 
 COLLECTION_MAX_WORKERS = 10
-COLLECTION_SOURCE_TYPES = {"album", "playlist", "batch"}
+COLLECTION_SOURCE_TYPES = {"album", "playlist"}
 
 
 class DownloadPipeline:
@@ -76,23 +76,44 @@ class DownloadPipeline:
 # ---------------------------------------------------------------------------
 
 
-def run_download(url: str, options: dict) -> None:
-    """Resolve a Spotify URL and download all tracks."""
+def run_download(urls: str | list[str], options: dict) -> None:
+    """Resolve Spotify URL(s) and download all tracks."""
     download_options = normalize_download_options(options)
     config, spotify = spotify_client_from_options(download_options)
     youtube_link = download_options.get("youtube_link")
-    source_type, source_name, tracks = spotify.resolve_url(url)
 
-    if source_type == "track" and tracks:
-        track = tracks[0]
-        if youtube_link:
-            spotify.source_cache.write_track(track, youtube_link=youtube_link)
-        else:
-            cached = spotify.source_cache.read_track(track.spotify_id)
-            youtube_link = cached[1] if cached else None
-            download_options["youtube_link"] = youtube_link
+    if isinstance(urls, list):
+        # Batch track resolution
+        source_type = "batch"
+        track_ids = [parse_spotify_url(u)[1] for u in urls if parse_spotify_url(u)[1]]
+        print(f"\n  Batch resolving {len(track_ids)} tracks...")
+        try:
+            tracks = spotify.batch_resolve_tracks(track_ids)
+        except SpotifyError as exc:
+            print(f"  Batch resolve failed ({exc}), falling back to individual resolution...")
+            for url in urls:
+                run_download(url, options)
+            return
+        source_name = f"Batch Download ({len(tracks)} tracks)"
+        # Persist youtube links to the track cache (mirrors single-track path)
+        yt_map = download_options.get("youtube_link_map") or {}
+        for track in tracks:
+            yt_link = yt_map.get(track.spotify_id)
+            if yt_link:
+                spotify.source_cache.write_track(track, youtube_link=yt_link)
+    else:
+        # Single URL resolution
+        source_type, source_name, tracks = spotify.resolve_url(urls)
+        if source_type == "track" and tracks:
+            track = tracks[0]
+            if youtube_link:
+                spotify.source_cache.write_track(track, youtube_link=youtube_link)
+            else:
+                cached = spotify.source_cache.read_track(track.spotify_id)
+                youtube_link = cached[1] if cached else None
+                download_options["youtube_link"] = youtube_link
 
-    if source_type in COLLECTION_SOURCE_TYPES:
+    if len(tracks) > 1:
         CoverResolver(spotify.cover_cache).prefetch(tracks)
 
     download_tracks(
@@ -125,7 +146,6 @@ def download_tracks(
         tracks=tracks,
         options=options,
         cover_cache=cover_cache,
-        youtube_link=options.get("youtube_link"),
         playlist_name=playlist_name,
     )
     done = sum(1 for result in results if result.status == "done")
@@ -142,7 +162,6 @@ def process_tracks(
     tracks: list[TrackMetadata],
     options: dict,
     cover_cache: CoverCache | None = None,
-    youtube_link: str | None = None,
     playlist_name: str | None = None,
 ) -> list[DownloadResult]:
     """Run sequential or concurrent download based on source type and options."""
@@ -153,7 +172,13 @@ def process_tracks(
         playlist_name=playlist_name,
     )
 
-    if source_type not in COLLECTION_SOURCE_TYPES or options["dry_run"] or len(tracks) <= 1:
+    youtube_link = options.get("youtube_link")
+    yt_map = options.get("youtube_link_map") or {}
+
+    def _yt_url(track: TrackMetadata) -> str | None:
+        return yt_map.get(track.spotify_id) or youtube_link
+
+    if options["dry_run"] or len(tracks) <= 1:
         results = []
         try:
             for index, track in enumerate(tracks, start=1):
@@ -161,7 +186,7 @@ def process_tracks(
                     track,
                     skip_existing=options["skip_existing"],
                     dry_run=options["dry_run"],
-                    youtube_url=youtube_link,
+                    youtube_url=_yt_url(track),
                 )
                 results.append(result)
                 print_track_result(index, len(tracks), result)
@@ -171,8 +196,7 @@ def process_tracks(
         return results
 
     workers = min(max(1, int(config.concurrency)), COLLECTION_MAX_WORKERS, len(tracks))
-    if source_type != "batch":
-        print(f"  Processing {source_type} with {workers} concurrent workers.\n")
+    print(f"  Processing {source_type} with {workers} concurrent workers.\n")
     results: list[DownloadResult] = []
     completed = 0
     executor = ThreadPoolExecutor(max_workers=workers)
@@ -182,7 +206,7 @@ def process_tracks(
             track,
             skip_existing=options["skip_existing"],
             dry_run=options["dry_run"],
-            youtube_url=youtube_link,
+            youtube_url=_yt_url(track),
         ): track
         for track in tracks
     }
@@ -215,36 +239,3 @@ def print_track_result(index: int, total: int, result: DownloadResult) -> None:
     if result.error:
         print(f"      {result.error}", file=sys.stderr)
 
-
-def run_batch_download(urls: list[str], options: dict) -> None:
-    """Batch-resolve track URLs, then download."""
-    download_options = normalize_download_options(options)
-    config, spotify = spotify_client_from_options(download_options)
-
-    track_ids = []
-    for url in urls:
-        _, item_id = parse_spotify_url(url)
-        if item_id:
-            track_ids.append(item_id)
-
-    print(f"\n  Batch resolving {len(track_ids)} tracks...")
-
-    try:
-        tracks = spotify.batch_resolve_tracks(track_ids)
-    except SpotifyError as exc:
-        # Fallback: user not authenticated or API error
-        print(f"  Batch resolve failed ({exc}), falling back to per-track resolution...")
-        for url in urls:
-            run_download(url, options)
-        return
-
-    CoverResolver(spotify.cover_cache).prefetch(tracks)
-
-    download_tracks(
-        config=config,
-        source_type="batch",
-        source_name="Batch Download",
-        tracks=tracks,
-        options=download_options,
-        cover_cache=spotify.cover_cache,
-    )

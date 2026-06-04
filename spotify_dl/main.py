@@ -9,7 +9,7 @@ from spotify_dl.auth import AuthManager
 from spotify_dl.cli_utils import spotify_client_from_options
 from spotify_dl.config import ConfigManager
 from spotify_dl.exceptions import SpotifyDlError
-from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download, run_batch_download
+from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download
 from spotify_dl.sync import run_sync
 from spotify_dl.spotify import BATCH_TRACK_THRESHOLD, parse_spotify_url
 
@@ -534,11 +534,24 @@ def main() -> None:
 
         elif args.command == "download":
             
+            opts = dict(vars(args))
+            opts["youtube_link"] = None
+            opts["youtube_link_map"] = None
+
             if args.youtube_links:
-                for spotify_url, yt_link in zip(args.urls, args.youtube_links):
-                    opts = dict(vars(args))
-                    opts["youtube_link"] = yt_link
-                    run_download(spotify_url, opts)
+                yt_map = {
+                    parse_spotify_url(url)[1]: yt
+                    for url, yt in zip(args.urls, args.youtube_links)
+                }
+                opts["youtube_link_map"] = yt_map
+
+                if len(args.urls) > BATCH_TRACK_THRESHOLD:
+                    run_download(args.urls, opts)
+                else:
+                    for url, yt in zip(args.urls, args.youtube_links):
+                        opts_single = dict(opts)
+                        opts_single["youtube_link"] = yt
+                        run_download(url, opts_single)
             else:
                 track_urls = []
                 collection_urls = []
@@ -549,11 +562,8 @@ def main() -> None:
                     else:
                         collection_urls.append(url)
 
-                opts = dict(vars(args))
-                opts["youtube_link"] = None
-
                 if len(track_urls) > BATCH_TRACK_THRESHOLD:
-                    run_batch_download(track_urls, opts)
+                    run_download(track_urls, opts)
                 else:
                     for url in track_urls:
                         run_download(url, opts)
