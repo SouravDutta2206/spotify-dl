@@ -337,13 +337,16 @@ def build_download_parser(subparsers) -> None:
         description=(
             "Download one or more Spotify URLs (tracks, albums, or playlists).\n\n"
             "You may optionally pair each Spotify URL with a YouTube URL via\n"
-            "--youtube-link to skip the search step. When --youtube-link is used,\n"
-            "its count must exactly match the number of Spotify track URLs given.\n"
-            "Albums and playlists are not supported with --youtube-link.\n\n"
+            "--youtube-link to skip the search step. Use '_' as a placeholder\n"
+            "to fall back to YouTube search for that position. When --youtube-link\n"
+            "is used, its count must exactly match the number of Spotify track\n"
+            "URLs given. Albums and playlists are not supported with --youtube-link.\n\n"
             "Examples:\n"
             "  spotify-dl download 'spotify:track:abc123'\n\n"
             "  spotify-dl download 'url1' 'url2' \\\n"
             "             --youtube-link 'yt_url1' 'yt_url2'\n\n"
+            "  spotify-dl download 'url1' 'url2' 'url3' \\\n"
+            "             --youtube-link _ 'yt_url2' _\n\n"
             "  spotify-dl download 'url1' 'url2' \\\n"
             "             --output ~/Music --quality 320 --dry-run"
         ),
@@ -363,6 +366,7 @@ def build_download_parser(subparsers) -> None:
         dest="youtube_links",
         help=(
             "One or more YouTube URLs to use directly, bypassing the search step. "
+            "Use '_' as a placeholder to skip a position and fall back to YouTube search. "
             "Count must exactly match the number of Spotify track URLs provided. "
             "Albums and playlists are not supported with this option."
         ),

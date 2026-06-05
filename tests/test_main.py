@@ -256,3 +256,53 @@ def test_run_download_normalizes_options(app_config, tmp_path, monkeypatch):
     assert opts["dry_run"] is False
     assert opts["skip_existing"] is True
     assert opts["make_playlist"] is False
+
+
+def test_download_validation_allows_tracks_with_youtube_link_skip_placeholders():
+    from spotify_dl.main import validate_download
+
+    _, download_parser, args = _parse_download_args(
+        [
+            "https://open.spotify.com/track/track123",
+            "spotify:track:track456",
+            "--youtube-link",
+            "_",
+            "https://youtube.com/watch?v=second",
+        ]
+    )
+
+    validate_download(args, download_parser)
+
+
+def test_dispatch_download_with_youtube_link_skip(monkeypatch):
+    from spotify_dl.main import _dispatch_download
+
+    _, _, args = _parse_download_args(
+        [
+            "https://open.spotify.com/track/track123",
+            "spotify:track:track456",
+            "--youtube-link",
+            "_",
+            "https://youtube.com/watch?v=second",
+        ]
+    )
+
+    downloaded = []
+    def fake_run_download(urls, options):
+        downloaded.append((urls, options))
+
+    monkeypatch.setattr("spotify_dl.main.run_download", fake_run_download)
+
+    _dispatch_download(args)
+
+    assert len(downloaded) == 2
+    assert downloaded[0][0] == "https://open.spotify.com/track/track123"
+    assert downloaded[0][1]["youtube_link"] is None
+    assert downloaded[0][1]["youtube_link_map"] == {
+        "track123": None,
+        "track456": "https://youtube.com/watch?v=second",
+    }
+    
+    assert downloaded[1][0] == "spotify:track:track456"
+    assert downloaded[1][1]["youtube_link"] == "https://youtube.com/watch?v=second"
+

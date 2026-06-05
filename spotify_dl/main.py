@@ -152,7 +152,7 @@ def _dispatch_download(args: argparse.Namespace) -> None:
     # Build YouTube link mapping (if provided)
     if args.youtube_links:
         opts["youtube_link_map"] = {
-            parse_spotify_url(url)[1]: yt
+            parse_spotify_url(url)[1]: (yt if yt != "_" else None)
             for url, yt in zip(args.urls, args.youtube_links)
         }
 
@@ -170,7 +170,7 @@ def _dispatch_download(args: argparse.Namespace) -> None:
         elif args.youtube_links:
             for url, yt in zip(track_urls, args.youtube_links):
                 opts_single = dict(opts)
-                opts_single["youtube_link"] = yt
+                opts_single["youtube_link"] = yt if yt != "_" else None
                 run_download(url, opts_single)
         else:
             for url in track_urls:
