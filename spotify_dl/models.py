@@ -80,3 +80,14 @@ class DownloadResult:
     final_mp3_path: Path | None
     status: Literal["done", "skipped", "failed"]
     error: str | None
+
+@dataclass(frozen=True)
+class ManifestTrack:
+    spotify_url: str
+    youtube_url: str | None = None
+
+
+@dataclass(frozen=True)
+class DownloadManifest:
+    tracks: list[ManifestTrack]
+    collections: list[str]

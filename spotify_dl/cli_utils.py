@@ -341,8 +341,10 @@ def build_download_parser(subparsers) -> None:
             "to fall back to YouTube search for that position. When --youtube-link\n"
             "is used, its count must exactly match the number of Spotify track\n"
             "URLs given. Albums and playlists are not supported with --youtube-link.\n\n"
+            "You can also load an INI-style link manifest with --from-file.\n\n"
             "Examples:\n"
             "  spotify-dl download 'spotify:track:abc123'\n\n"
+            "  spotify-dl download --from-file links.txt\n\n"
             "  spotify-dl download 'url1' 'url2' \\\n"
             "             --youtube-link 'yt_url1' 'yt_url2'\n\n"
             "  spotify-dl download 'url1' 'url2' 'url3' \\\n"
@@ -355,9 +357,18 @@ def build_download_parser(subparsers) -> None:
 
     dl_parser.add_argument(
         "urls",
-        nargs="+",
+        nargs="*",
         metavar="URL",
         help="One or more Spotify track, album, or playlist URLs.",
+    )
+    dl_parser.add_argument(
+        "--from-file",
+        metavar="PATH",
+        dest="from_file",
+        help=(
+            "Load Spotify URLs from a manifest file with [tracks], [playlists], "
+            "and [albums] sections. Track lines may use 'spotify_url | youtube_url'."
+        ),
     )
     dl_parser.add_argument(
         "--youtube-link",

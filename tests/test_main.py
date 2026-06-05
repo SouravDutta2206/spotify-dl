@@ -95,6 +95,83 @@ def test_download_validation_allows_tracks_with_youtube_link():
     validate_download(args, download_parser)
 
 
+def test_parse_download_manifest_groups_tracks_and_collections(tmp_path):
+    from spotify_dl.manifest import parse_download_manifest
+
+    manifest_path = tmp_path / "links.txt"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "# batch manifest",
+                "[tracks]",
+                "spotify:track:track123",
+                "spotify:track:track456 | https://youtube.com/watch?v=second",
+                "",
+                "[playlists]",
+                "spotify:playlist:playlist123",
+                "",
+                "[album]",
+                "spotify:album:album123",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = parse_download_manifest(manifest_path)
+
+    assert [(track.spotify_url, track.youtube_url) for track in manifest.tracks] == [
+        ("spotify:track:track123", None),
+        ("spotify:track:track456", "https://youtube.com/watch?v=second"),
+    ]
+    assert manifest.collections == [
+        "spotify:playlist:playlist123",
+        "spotify:album:album123",
+    ]
+
+
+def test_download_validation_loads_manifest_from_file(tmp_path):
+    from spotify_dl.main import validate_download
+
+    manifest_path = tmp_path / "links.txt"
+    manifest_path.write_text("[tracks]\nspotify:track:track123\n", encoding="utf-8")
+    _, download_parser, args = _parse_download_args(["--from-file", str(manifest_path)])
+
+    validate_download(args, download_parser)
+
+    assert args.download_manifest.tracks[0].spotify_url == "spotify:track:track123"
+
+
+def test_download_validation_rejects_from_file_with_urls(tmp_path):
+    from spotify_dl.main import validate_download
+
+    manifest_path = tmp_path / "links.txt"
+    manifest_path.write_text("[tracks]\nspotify:track:track123\n", encoding="utf-8")
+    _, download_parser, args = _parse_download_args(
+        ["spotify:track:other123", "--from-file", str(manifest_path)]
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        validate_download(args, download_parser)
+
+    assert exc_info.value.code == 2
+
+
+def test_download_validation_rejects_youtube_link_in_collection_section(tmp_path):
+    from spotify_dl.main import validate_download
+
+    manifest_path = tmp_path / "links.txt"
+    manifest_path.write_text(
+        "[playlists]\nspotify:playlist:playlist123 | https://youtube.com/watch?v=bad\n",
+        encoding="utf-8",
+    )
+    _, download_parser, args = _parse_download_args(["--from-file", str(manifest_path)])
+
+    with pytest.raises(SystemExit) as exc_info:
+        validate_download(args, download_parser)
+
+    assert exc_info.value.code == 2
+
+
 @pytest.mark.parametrize(
     "spotify_url",
     [
@@ -306,3 +383,51 @@ def test_dispatch_download_with_youtube_link_skip(monkeypatch):
     assert downloaded[1][0] == "spotify:track:track456"
     assert downloaded[1][1]["youtube_link"] == "https://youtube.com/watch?v=second"
 
+
+def test_dispatch_download_from_manifest_separates_tracks_and_collections(tmp_path, monkeypatch):
+    from spotify_dl.main import _dispatch_download, validate_download
+
+    manifest_path = tmp_path / "links.txt"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "[tracks]",
+                "spotify:track:track123",
+                "spotify:track:track456 | https://youtube.com/watch?v=second",
+                "[playlists]",
+                "spotify:playlist:playlist123",
+                "[albums]",
+                "spotify:album:album123",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _, download_parser, args = _parse_download_args(["--from-file", str(manifest_path)])
+    validate_download(args, download_parser)
+
+    downloaded = []
+
+    def fake_run_download(urls, options):
+        downloaded.append((urls, options))
+
+    monkeypatch.setattr("spotify_dl.main.run_download", fake_run_download)
+
+    _dispatch_download(args)
+
+    assert [call[0] for call in downloaded] == [
+        "spotify:track:track123",
+        "spotify:track:track456",
+        "spotify:playlist:playlist123",
+        "spotify:album:album123",
+    ]
+    assert downloaded[0][1]["youtube_link"] is None
+    assert downloaded[0][1]["youtube_link_map"] == {
+        "track456": "https://youtube.com/watch?v=second",
+    }
+    assert downloaded[1][1]["youtube_link"] is None
+    assert downloaded[1][1]["youtube_link_map"] == {
+        "track456": "https://youtube.com/watch?v=second",
+    }
+    assert downloaded[2][1]["youtube_link_map"] == {
+        "track456": "https://youtube.com/watch?v=second",
+    }

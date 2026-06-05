@@ -14,9 +14,13 @@ from spotify_dl.cli_utils import (
 )
 from spotify_dl.config import ConfigManager
 from spotify_dl.exceptions import SpotifyDlError
+from spotify_dl.manifest import DownloadManifest, ManifestParseError, parse_download_manifest
 from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download
 from spotify_dl.sync import run_sync
 from spotify_dl.spotify import BATCH_TRACK_THRESHOLD, parse_spotify_url
+
+
+YOUTUBE_LINK_SKIP = "_"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +37,20 @@ def validate_shared(args: argparse.Namespace, parser: argparse.ArgumentParser) -
 
 def validate_download(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     validate_shared(args, parser)
+
+    if args.from_file:
+        if args.urls:
+            parser.error("URL arguments cannot be combined with --from-file.")
+        if args.youtube_links is not None:
+            parser.error("--youtube-link cannot be combined with --from-file.")
+        try:
+            args.download_manifest = parse_download_manifest(args.from_file)
+        except ManifestParseError as exc:
+            parser.error(str(exc))
+        return
+
+    if not args.urls:
+        parser.error("download requires at least one Spotify URL or --from-file.")
 
     source_types = set()
     for url in args.urls:
@@ -149,34 +167,49 @@ def _dispatch_download(args: argparse.Namespace) -> None:
     opts["youtube_link"] = None
     opts["youtube_link_map"] = None
 
-    # Build YouTube link mapping (if provided)
-    if args.youtube_links:
-        opts["youtube_link_map"] = {
-            parse_spotify_url(url)[1]: (yt if yt != "_" else None)
-            for url, yt in zip(args.urls, args.youtube_links)
+    # ── Normalize input source ────────────────────────────────────────────
+    if args.from_file:
+        manifest = (
+            getattr(args, "download_manifest", None)
+            or parse_download_manifest(args.from_file)
+        )
+        urls = [t.spotify_url for t in manifest.tracks] + manifest.collections
+        yt_pairs = {
+            parse_spotify_url(t.spotify_url)[1]: t.youtube_url
+            for t in manifest.tracks
+            if t.youtube_url
         }
+        if yt_pairs:
+            opts["youtube_link_map"] = yt_pairs
+        youtube_links = None       # disable per-track CLI path
+    else:
+        urls = args.urls
+        youtube_links = args.youtube_links
+        if youtube_links:
+            opts["youtube_link_map"] = {
+                parse_spotify_url(url)[1]: (yt if yt != YOUTUBE_LINK_SKIP else None)
+                for url, yt in zip(urls, youtube_links)
+            }
 
-    # Partition URLs into tracks vs. collections
+    # ── Partition & dispatch (unchanged) ──────────────────────────────────
     track_urls: list[str] = []
     collection_urls: list[str] = []
-    for url in args.urls:
+    for url in urls:
         kind, _ = parse_spotify_url(url)
         (track_urls if kind == "track" else collection_urls).append(url)
 
-    # Dispatch track downloads (batch or individual)
     if track_urls:
         if len(track_urls) > BATCH_TRACK_THRESHOLD:
             run_download(track_urls, opts)
-        elif args.youtube_links:
-            for url, yt in zip(track_urls, args.youtube_links):
+        elif youtube_links:
+            for url, yt in zip(track_urls, youtube_links):
                 opts_single = dict(opts)
-                opts_single["youtube_link"] = yt if yt != "_" else None
+                opts_single["youtube_link"] = yt if yt != YOUTUBE_LINK_SKIP else None
                 run_download(url, opts_single)
         else:
             for url in track_urls:
                 run_download(url, opts)
 
-    # Dispatch collection downloads (always individual)
     for url in collection_urls:
         run_download(url, opts)
 
