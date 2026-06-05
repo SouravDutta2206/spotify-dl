@@ -29,7 +29,7 @@ class Tagger:
             if track.isrc:
                 tags.add(TSRC(encoding=0, text=track.isrc))
             if track.album_art_url:
-                art_data, art_mime = self._get_cover(track)
+                art_data, art_mime = self.cover_resolver.get_or_fetch(track)
                 if art_data:
                     tags.add(
                         APIC(
@@ -46,6 +46,3 @@ class Tagger:
         final_mp3.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(temp_mp3), str(final_mp3))
         return final_mp3
-
-    def _get_cover(self, track: TrackMetadata) -> tuple[bytes, str]:
-        return self.cover_resolver.get_or_fetch(track)

@@ -21,6 +21,3 @@ class DownloadError(SpotifyDlError):
 class TaggingError(SpotifyDlError):
     """Raised when ID3 tagging fails."""
 
-
-
-

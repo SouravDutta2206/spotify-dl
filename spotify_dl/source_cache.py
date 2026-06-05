@@ -13,6 +13,11 @@ SourceKind = Literal["album", "playlist"]
 _TRACK_FIELDS = frozenset(f.name for f in fields(TrackMetadata))
 
 
+def deserialize_tracks(payload: dict[str, Any]) -> list[TrackMetadata]:
+    """Convert a cache payload's 'tracks' list into TrackMetadata objects."""
+    return [TrackMetadata(**track) for track in payload.get("tracks", [])]
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -35,9 +40,11 @@ class SourceCache:
         entry["youtube-link"] = youtube_link if youtube_link is not None else old_link
         entry["cached_at"] = _utc_now()
         self._tracks[track.spotify_id] = entry
+
+    def flush_tracks(self) -> None:
         payload = {
             "kind": "tracks",
-            "cached_at": entry["cached_at"],
+            "cached_at": _utc_now(),
             "tracks": self._tracks,
         }
         write_json_atomic(self.cache_directory / "tracks.json", payload)

@@ -30,8 +30,6 @@ class CoverResolver:
             if not track.album_id or not track.album_art_url or track.album_id in seen:
                 continue
             seen.add(track.album_id)
-            if self.cover_cache and self.cover_cache.get(track.album_id) is not None:
-                continue
             try:
                 self.get_or_fetch(track)
             except Exception:

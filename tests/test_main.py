@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from concurrent.futures import Future
+
 from spotify_dl.models import AccountProfile
 from spotify_dl.pipeline import process_tracks
 from spotify_dl.models import DownloadResult
@@ -9,10 +11,10 @@ from tests.conftest import make_track
 
 
 def _parse_download_args(argv):
-    from spotify_dl.main import _get_subparser, build_parser
+    from spotify_dl.cli_utils import build_parser
 
     parser = build_parser()
-    return parser, _get_subparser(parser, "download"), parser.parse_args(["download", *argv])
+    return parser, parser, parser.parse_args(["download", *argv])
 
 
 def test_cli_alias_calls_main(monkeypatch):
@@ -123,13 +125,8 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(app_config,
     class FakeFuture:
         def cancel(self):
             return True
-
         def done(self):
-            # Raise KeyboardInterrupt when checking done status to simulate a keyboard interrupt
-            raise KeyboardInterrupt
-
-        def result(self):
-            raise AssertionError("result should not be called")
+            return False
 
     class FakeExecutor:
         def __init__(self, max_workers, *args, **kwargs):
@@ -142,8 +139,12 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(app_config,
         def shutdown(self, **kwargs):
             self.shutdown_args = kwargs
 
+    def fake_sleep(seconds):
+        raise KeyboardInterrupt
+
     executor = FakeExecutor(max_workers=5)
     monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers, **kwargs: executor)
+    monkeypatch.setattr("spotify_dl.pipeline.time.sleep", fake_sleep)
     monkeypatch.setattr("os._exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
 
     with pytest.raises(SystemExit) as exc_info:
@@ -161,16 +162,6 @@ def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(app_config,
 def test_album_processing_uses_concurrent_workers(app_config, tmp_path, monkeypatch):
     config = app_config
 
-    class FakeFuture:
-        def __init__(self, result):
-            self._result = result
-
-        def done(self):
-            return True
-
-        def result(self):
-            return self._result
-
     class FakeExecutor:
         def __init__(self, max_workers, *args, **kwargs):
             self.max_workers = max_workers
@@ -179,7 +170,9 @@ def test_album_processing_uses_concurrent_workers(app_config, tmp_path, monkeypa
 
         def submit(self, func, track, **kwargs):
             self.submitted.append((func, track, kwargs))
-            return FakeFuture(DownloadResult(track, None, tmp_path / "out.mp3", "done", None))
+            future = Future()
+            future.set_result(DownloadResult(track, None, tmp_path / "out.mp3", "done", None))
+            return future
 
         def shutdown(self, **kwargs):
             self.shutdown_args = kwargs

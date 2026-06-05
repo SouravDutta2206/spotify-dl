@@ -22,4 +22,8 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         json.dump(payload, fh, indent=2)
         fh.write("\n")
         fh.flush()
-    tmp.replace(path)
+    try:
+        tmp.replace(path)
+    except OSError:
+        path.write_text(tmp.read_text(encoding="utf-8"), encoding="utf-8")
+        tmp.unlink(missing_ok=True)

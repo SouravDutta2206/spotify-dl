@@ -73,6 +73,7 @@ def build_yt_dlp_options(
     }
     if js_runtimes := javascript_runtime_options():
         options["js_runtimes"] = js_runtimes
+    options.update(cookie_options(config))
 
     if mode == "search":
         options.update(
@@ -81,7 +82,6 @@ def build_yt_dlp_options(
                 "extract_flat": False,
             }
         )
-        options.update(cookie_options(config))
         return options
 
     if not config:
@@ -100,7 +100,6 @@ def build_yt_dlp_options(
             "postprocessors": [postprocessor],
         }
     )
-    options.update(cookie_options(config))
     return options
 
 

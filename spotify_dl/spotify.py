@@ -13,7 +13,7 @@ from spotify_dl.auth import USER_SCOPES, build_spotify_oauth
 from spotify_dl.config import ConfigManager
 from spotify_dl.exceptions import SpotifyError
 from spotify_dl.models import AccountProfile, AppConfig, PlaylistSummary, TrackMetadata
-from spotify_dl.source_cache import CoverCache, SourceCache
+from spotify_dl.source_cache import CoverCache, SourceCache, deserialize_tracks
 
 
 SPOTIFY_URL_RE = re.compile(
@@ -126,6 +126,7 @@ class SpotifyClient:
         try:
             track = track_from_spotify(self._api().track(track_id))
             self.source_cache.write_track(track)
+            self.source_cache.flush_tracks()
             return track
         except Exception as exc:
             raise SpotifyError(f"Track not found on Spotify: {track_id}") from exc
@@ -133,7 +134,7 @@ class SpotifyClient:
     def get_album(self, album_id: str) -> list[TrackMetadata]:
         payload = self.source_cache.read_collection("album", album_id)
         if payload:
-            return [TrackMetadata(**track) for track in payload.get("tracks", [])]
+            return deserialize_tracks(payload)
         try:
             api = self._api()
             album = api.album(album_id)
@@ -174,7 +175,7 @@ class SpotifyClient:
                 playlist_name = header.get("name")
             payload = self.source_cache.read_collection("playlist", playlist_id)
             if payload and (snapshot_id is None or payload.get("snapshot_id") == snapshot_id):
-                return [TrackMetadata(**track) for track in payload.get("tracks", [])]
+                return deserialize_tracks(payload)
             page = api.playlist_items(playlist_id, limit=100, offset=0)
             tracks: list[TrackMetadata] = []
             for item in _iter_page_items(api, page):
@@ -196,9 +197,9 @@ class SpotifyClient:
                     snapshot_id=snapshot_id,
                 )
             return tracks
-        except SpotifyError:
-            raise
         except Exception as exc:
+            if isinstance(exc, SpotifyError):
+                raise
             raise SpotifyError(f"Playlist not found on Spotify: {playlist_id}") from exc
 
     def list_user_playlists(self) -> list[PlaylistSummary]:
@@ -248,16 +249,15 @@ class SpotifyClient:
 
     def get_playlist_track_count(self, playlist_id: str) -> int:
         api = self._api(require_user=True)
-        try:
-            page = api.playlist_items(playlist_id, limit=1, offset=0, fields="total")
-            return int(page.get("total") or 0)
-        except Exception:
-            pass
-        try:
-            header = api.playlist(playlist_id, fields="tracks(total)")
-            return int(((header.get("tracks") or {}).get("total")) or 0)
-        except Exception:
-            return 0
+        for fetch in (
+            lambda: int((api.playlist_items(playlist_id, limit=1, offset=0, fields="total").get("total")) or 0),
+            lambda: int(((api.playlist(playlist_id, fields="tracks(total)").get("tracks") or {}).get("total")) or 0),
+        ):
+            try:
+                return fetch()
+            except Exception:
+                continue
+        return 0
 
     def _api(self, *, require_user: bool = False) -> spotipy.Spotify:
         """Return the best available client. User-auth preferred when available."""
@@ -341,5 +341,6 @@ class SpotifyClient:
         for track in tracks:
             self.source_cache.write_track(track)
             cached[track.spotify_id] = track
+        self.source_cache.flush_tracks()
 
         return [cached[tid] for tid in track_ids if tid in cached]

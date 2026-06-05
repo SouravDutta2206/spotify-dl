@@ -6,6 +6,7 @@ from spotify_dl.pipeline import download_tracks
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.models import AppConfig, TrackMetadata
+from spotify_dl.source_cache import deserialize_tracks
 from spotify_dl.spotify import SpotifyClient
 from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
 
@@ -79,7 +80,7 @@ def _sync_playlist(
             playlist_name=playlist_name,
         )
     else:
-        tracks = [TrackMetadata(**track) for track in payload.get("tracks", [])]
+        tracks = deserialize_tracks(payload)
 
     needs_download = snapshot_changed or has_missing_track_files(
         filesystem,

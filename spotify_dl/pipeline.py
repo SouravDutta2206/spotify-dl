@@ -101,6 +101,7 @@ def run_download(urls: str | list[str], options: dict) -> None:
             yt_link = yt_map.get(track.spotify_id)
             if yt_link:
                 spotify.source_cache.write_track(track, youtube_link=yt_link)
+        spotify.source_cache.flush_tracks()
     else:
         # Single URL resolution
         source_type, source_name, tracks = spotify.resolve_url(urls)
@@ -108,6 +109,7 @@ def run_download(urls: str | list[str], options: dict) -> None:
             track = tracks[0]
             if youtube_link:
                 spotify.source_cache.write_track(track, youtube_link=youtube_link)
+                spotify.source_cache.flush_tracks()
             else:
                 cached = spotify.source_cache.read_track(track.spotify_id)
                 youtube_link = cached[1] if cached else None
