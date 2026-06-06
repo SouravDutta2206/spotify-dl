@@ -35,7 +35,17 @@ class AuthManager:
 
     def login(self) -> str:
         logger.info("Login attempt started")
-        oauth = build_spotify_oauth(self.config, open_browser=True)
+        import os
+        import sys
+
+        # Fall back to headless authentication if no DISPLAY is set or requested via env var
+        open_browser = True
+        if os.getenv("SPOTIFY_DL_HEADLESS") == "1":
+            open_browser = False
+        elif sys.platform != "win32" and "DISPLAY" not in os.environ:
+            open_browser = False
+
+        oauth = build_spotify_oauth(self.config, open_browser=open_browser)
         token_info = oauth.get_access_token(as_dict=True, check_cache=False)
         expiry = datetime.fromtimestamp(token_info["expires_at"], tz=timezone.utc)
         self.config_manager.save_user_auth(
