@@ -47,6 +47,7 @@ def test_search_options_use_shared_defaults(monkeypatch):
     assert build_yt_dlp_options(mode="search", verbose=False) == {
         "quiet": True,
         "no_warnings": True,
+        "extractor_args": {"youtube": {"player_client": ["default", "web_creator"]}},
         "skip_download": True,
         "extract_flat": False,
     }

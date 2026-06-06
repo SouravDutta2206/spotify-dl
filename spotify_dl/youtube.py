@@ -73,6 +73,10 @@ def build_yt_dlp_options(
     options: dict[str, object] = {
         "quiet": not verbose,
         "no_warnings": not verbose,
+        # Use player clients that can handle age-restricted content.
+        # "default" is the standard web client; "web_creator" can bypass
+        # age gates that the default client cannot.
+        "extractor_args": {"youtube": {"player_client": ["default", "web_creator"]}},
     }
     if js_runtimes := javascript_runtime_options():
         options["js_runtimes"] = js_runtimes
@@ -107,7 +111,8 @@ def build_yt_dlp_options(
 
 
 class YouTubeSearcher:
-    def __init__(self, *, min_score: int = 65, verbose: bool = False) -> None:
+    def __init__(self, *, config: AppConfig | None = None, min_score: int = 65, verbose: bool = False) -> None:
+        self.config = config
         self.min_score = min_score
         self.verbose = verbose
 
@@ -117,7 +122,7 @@ class YouTubeSearcher:
     def find_best_match(self, track: TrackMetadata) -> YouTubeMatch:
         query = self.build_query(track)
         logger.debug("Search query: %s", query)
-        options = build_yt_dlp_options(mode="search", verbose=self.verbose)
+        options = build_yt_dlp_options(mode="search", config=self.config, verbose=self.verbose)
         with YoutubeDL(options) as ydl:
             data = ydl.extract_info(f"ytsearch10:{query}", download=False)
         entries = (data or {}).get("entries") or []

@@ -38,7 +38,7 @@ class DownloadPipeline:
     ) -> None:
         self.config = config
         self.filesystem = FileSystem(config.output_directory)
-        self.searcher = YouTubeSearcher(verbose=verbose)
+        self.searcher = YouTubeSearcher(config=config, verbose=verbose)
         self.downloader = Downloader(config, verbose=verbose)
         self.tagger = Tagger(cover_cache=cover_cache)
         self.playlist_name = playlist_name

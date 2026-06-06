@@ -40,6 +40,10 @@ def validate_shared(args: argparse.Namespace, parser: argparse.ArgumentParser) -
 def validate_download(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     validate_shared(args, parser)
 
+    # "download playlists" shortcut — skip normal URL validation
+    if getattr(args, "urls", None) == ["playlists"]:
+        return
+
     if args.from_file:
         if args.urls:
             parser.error("URL arguments cannot be combined with --from-file.")
@@ -163,8 +167,40 @@ def _handle_profile(args: argparse.Namespace) -> None:
     print(f"Explicit filter: {profile.explicit_filter_enabled}")
 
 
+def _download_all_playlists(args: argparse.Namespace) -> None:
+    """Fetch all user playlists and download each through the standard pipeline."""
+    opts = dict(vars(args))
+    opts["youtube_link"] = None
+    opts["youtube_link_map"] = None
+
+    _, spotify = spotify_client_from_options(opts)
+    playlists = spotify.list_user_playlists()
+    if not playlists:
+        print("No playlists found on your profile.")
+        return
+
+    print(f"\n  Found {len(playlists)} playlist(s) on your profile.\n")
+    for index, pl in enumerate(playlists, start=1):
+        print(f"  {index:>2}. {pl.name}  ({pl.track_count} tracks)  {pl.spotify_url}")
+    print()
+
+    for index, pl in enumerate(playlists, start=1):
+        print(f"\n{'='*60}")
+        print(f"  [{index}/{len(playlists)}] Downloading playlist: {pl.name}")
+        print(f"{'='*60}")
+        run_download(pl.spotify_url, opts)
+
+    print(f"\n  All {len(playlists)} playlist(s) processed.")
+
+
 def _dispatch_download(args: argparse.Namespace) -> None:
     """Partition Spotify URLs and dispatch downloads."""
+
+    # ── Handle "download playlists" shortcut ──────────────────────────────
+    if getattr(args, "urls", None) == ["playlists"]:
+        _download_all_playlists(args)
+        return
+
     opts = dict(vars(args))
     opts["youtube_link"] = None
     opts["youtube_link_map"] = None
