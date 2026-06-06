@@ -11,7 +11,10 @@ from dotenv import load_dotenv
 
 from spotify_dl.exceptions import ConfigError
 from spotify_dl.json_io import read_json, write_json_atomic
+from spotify_dl.logging import get_logger
 from spotify_dl.models import AppConfig
+
+logger = get_logger("config")
 
 CONFIG_HOME = Path.home() / ".spotify-dl"
 CONFIG_PATH = CONFIG_HOME / "config.json"
@@ -101,6 +104,7 @@ class ConfigManager:
     ) -> AppConfig:
         load_dotenv()
         raw = self.read_raw()
+        logger.debug("Config loaded from %s", self.config_path)
         spotify = raw["spotify"]
         user_auth = spotify["user_auth"]
 
@@ -116,6 +120,9 @@ class ConfigManager:
                 "  or: set SPOTIFY_CLIENT_ID=<id> and SPOTIFY_CLIENT_SECRET=<secret>\n\n"
                 "Get your credentials at: https://developer.spotify.com/dashboard"
             )
+
+        logger.debug("Resolved output directory: %s",
+                     Path(output_directory).expanduser() if output_directory else Path(raw['output']['directory']).expanduser())
 
         resolved_quality = str(quality or raw["output"]["quality"])
         if resolved_quality not in VALID_QUALITIES:
@@ -146,10 +153,12 @@ class ConfigManager:
         current = self.read_raw()
         next_config = _deep_merge(current, partial)
         write_json_atomic(self.config_path, next_config)
+        logger.info("Config saved to %s", self.config_path)
 
     def clear(self) -> None:
         if self.config_path.exists():
             self.config_path.unlink()
+        logger.info("Config cleared")
 
     def clear_cookies(self) -> None:
         self.save({"youtube": {"cookie_browser": None, "cookie_file": None}})

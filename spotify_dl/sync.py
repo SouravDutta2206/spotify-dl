@@ -5,10 +5,13 @@ import sys
 from spotify_dl.pipeline import download_tracks
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.filesystem import FileSystem
+from spotify_dl.logging import get_logger
 from spotify_dl.models import AppConfig, TrackMetadata
 from spotify_dl.source_cache import deserialize_tracks
 from spotify_dl.spotify import SpotifyClient
 from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
+
+logger = get_logger("sync")
 
 
 def has_missing_track_files(
@@ -36,6 +39,7 @@ def run_sync(options: dict) -> None:
     filesystem = FileSystem(config.output_directory)
     make_playlist = bool(download_options.get("make_playlist"))
 
+    logger.info("Syncing %d cached playlist(s)", len(cached_playlists))
     print(f"\nSyncing {len(cached_playlists)} cached playlist(s)...\n")
     for playlist_id, _path in cached_playlists:
         _sync_playlist(
@@ -66,6 +70,7 @@ def _sync_playlist(
     try:
         header = spotify.get_playlist_header(playlist_id)
     except SpotifyDlError as exc:
+        logger.error("Sync error for playlist %s: %s", playlist_id, exc)
         print(f"  Error ({playlist_id}): {exc}", file=sys.stderr)
         return
 
@@ -89,12 +94,15 @@ def _sync_playlist(
         playlist_name=playlist_name,
     )
     if not needs_download:
+        logger.debug("Up to date: %s (%s)", playlist_name, playlist_id)
         print(f"  Up to date: {playlist_name}")
         return
 
     if snapshot_changed:
+        logger.info("Sync: %s — snapshot changed", playlist_name)
         print(f"  Updated: {playlist_name} (snapshot changed)")
     else:
+        logger.info("Sync: %s — gap fill (missing files)", playlist_name)
         print(f"  Gap fill: {playlist_name} (missing files)")
 
     download_tracks(

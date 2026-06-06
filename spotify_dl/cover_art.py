@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import requests
 
+from spotify_dl.logging import get_logger
 from spotify_dl.models import TrackMetadata
 from spotify_dl.source_cache import CoverCache
+
+logger = get_logger("cover_art")
 
 DEFAULT_COVER_MIME = "image/jpeg"
 
@@ -16,10 +19,12 @@ class CoverResolver:
         if self.cover_cache and track.album_id:
             cached = self.cover_cache.get(track.album_id)
             if cached:
+                logger.debug("Cover cache hit for album %s", track.album_id)
                 return cached
         if not track.album_art_url:
             return b"", DEFAULT_COVER_MIME
         data, mime = fetch_cover(track.album_art_url)
+        logger.debug("Cover fetched for album %s", track.album_id)
         if self.cover_cache and track.album_id:
             self.cover_cache.put(track.album_id, data, mime)
         return data, mime
@@ -33,7 +38,7 @@ class CoverResolver:
             try:
                 self.get_or_fetch(track)
             except Exception:
-                pass
+                logger.warning("Cover fetch failed for album %s", track.album_id)
 
 
 def fetch_cover(url: str) -> tuple[bytes, str]:

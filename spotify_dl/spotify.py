@@ -12,8 +12,11 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from spotify_dl.auth import USER_SCOPES, build_spotify_oauth
 from spotify_dl.config import ConfigManager
 from spotify_dl.exceptions import SpotifyError
+from spotify_dl.logging import get_logger
 from spotify_dl.models import AccountProfile, AppConfig, PlaylistSummary, TrackMetadata
 from spotify_dl.source_cache import CoverCache, SourceCache, deserialize_tracks
+
+logger = get_logger("spotify")
 
 
 SPOTIFY_URL_RE = re.compile(
@@ -103,6 +106,7 @@ class SpotifyClient:
         url: str,
     ) -> tuple[str, str, list[TrackMetadata]]:
         kind, item_id = parse_spotify_url(url)
+        logger.info("resolve_url: kind=%s, id=%s", kind, item_id)
         if kind == "track":
             track = self.get_track(item_id)
             return kind, track.title, [track]
@@ -121,9 +125,11 @@ class SpotifyClient:
     def get_track(self, track_id: str) -> TrackMetadata:
         cached = self.source_cache.read_track(track_id)
         if cached:
+            logger.debug("Cache hit for track %s", track_id)
             track, _ = cached
             return track
         try:
+            logger.debug("API call: track(%s)", track_id)
             track = track_from_spotify(self._api().track(track_id))
             self.source_cache.write_track(track)
             self.source_cache.flush_tracks()
@@ -134,8 +140,10 @@ class SpotifyClient:
     def get_album(self, album_id: str) -> list[TrackMetadata]:
         payload = self.source_cache.read_collection("album", album_id)
         if payload:
+            logger.debug("Cache hit for album %s", album_id)
             return deserialize_tracks(payload)
         try:
+            logger.debug("API call: album(%s)", album_id)
             api = self._api()
             album = api.album(album_id)
             track_items = list(_iter_page_items(api, album["tracks"]))
@@ -175,7 +183,9 @@ class SpotifyClient:
                 playlist_name = header.get("name")
             payload = self.source_cache.read_collection("playlist", playlist_id)
             if payload and (snapshot_id is None or payload.get("snapshot_id") == snapshot_id):
+                logger.debug("Cache hit for playlist %s", playlist_id)
                 return deserialize_tracks(payload)
+            logger.debug("API call: playlist_items(%s)", playlist_id)
             page = api.playlist_items(playlist_id, limit=100, offset=0)
             tracks: list[TrackMetadata] = []
             for item in _iter_page_items(api, page):
@@ -284,6 +294,7 @@ class SpotifyClient:
             raise SpotifyError("Run spotify-dl auth login first")
         if not self.config_manager:
             raise SpotifyError("User token expired. Run spotify-dl auth login again.")
+        logger.info("Refreshing Spotify user token")
         oauth = build_spotify_oauth(self.config, open_browser=False)
         token_info = oauth.refresh_access_token(self.config.spotify_user_refresh_token)
         expiry = datetime.fromtimestamp(token_info["expires_at"], tz=timezone.utc)
@@ -297,6 +308,7 @@ class SpotifyClient:
         self.config.spotify_user_access_token = token_info["access_token"]
         self.config.spotify_user_refresh_token = refresh_token
         self.config.spotify_user_token_expiry = expiry
+        logger.info("Token refreshed, expires %s", expiry.isoformat())
 
     def batch_resolve_tracks(self, track_ids: list[str]) -> list[TrackMetadata]:
         """Resolve many track IDs efficiently via a temporary playlist."""
@@ -327,6 +339,7 @@ class SpotifyClient:
             "description": "Temporary playlist for spotify-dl batch resolution.",
         })
         playlist_id = playlist["id"]
+        logger.info("Batch resolve: created temp playlist %s for %d tracks", playlist_id, len(uncached_ids))
         try:
             uris = [f"spotify:track:{tid}" for tid in uncached_ids]
             for i in range(0, len(uris), 100):

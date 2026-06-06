@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from typing import Any
 
 from spotify_dl.auth import AuthManager
@@ -14,6 +15,7 @@ from spotify_dl.cli_utils import (
 )
 from spotify_dl.config import ConfigManager
 from spotify_dl.exceptions import SpotifyDlError
+from spotify_dl.logging import get_logger, setup_session_logging
 from spotify_dl.manifest import DownloadManifest, ManifestParseError, parse_download_manifest
 from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download
 from spotify_dl.sync import run_sync
@@ -228,10 +230,16 @@ _HANDLERS = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    setup_session_logging()
+    logger = get_logger("main")
+    t0 = time.monotonic()
+
     # Intercept Spotify URLs passed directly as the first argument (fallback behavior)
     commands = {"auth", "config", "profile", "playlists", "download", "-h", "--help"}
     if len(sys.argv) > 1 and sys.argv[1] not in commands and not sys.argv[1].startswith("-"):
         sys.argv.insert(1, "download")
+
+    logger.info("Session started: %s", " ".join(sys.argv))
 
     parser = build_parser()
 
@@ -241,6 +249,7 @@ def main() -> None:
         sys.exit(0)
 
     args = parser.parse_args()
+    logger.debug("Parsed command: %s, args: %s", args.command, vars(args))
 
     # Post-parse validation
     if args.command == "download":
@@ -258,11 +267,15 @@ def main() -> None:
     try:
         handler(args)
     except SpotifyDlError as exc:
+        logger.error("SpotifyDlError: %s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
+        logger.warning("Session aborted by user")
         print("\n  Aborted.", file=sys.stderr)
         sys.exit(130)
+    finally:
+        logger.info("Session finished in %.1fs", time.monotonic() - t0)
 
 
 if __name__ == "__main__":

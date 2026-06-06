@@ -7,8 +7,11 @@ from mutagen.id3 import APIC, TALB, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TSRC, ID
 
 from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import TaggingError
+from spotify_dl.logging import get_logger
 from spotify_dl.models import TrackMetadata
 from spotify_dl.source_cache import CoverCache
+
+logger = get_logger("tagger")
 
 
 class Tagger:
@@ -16,6 +19,7 @@ class Tagger:
         self.cover_resolver = CoverResolver(cover_cache)
 
     def tag(self, temp_mp3: Path, final_mp3: Path, track: TrackMetadata) -> Path:
+        logger.debug("Tagging: %s", track.title)
         try:
             tags = ID3()
             tags.add(TIT2(encoding=1, text=track.title))
@@ -42,7 +46,9 @@ class Tagger:
                     )
             tags.save(temp_mp3, v2_version=3)
         except Exception as exc:
+            logger.error("Tagging failed for %s: %s", track.title, exc)
             raise TaggingError(f"Failed to write tags: {exc}") from exc
         final_mp3.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(temp_mp3), str(final_mp3))
+        logger.debug("Tagged and moved to: %s", final_mp3)
         return final_mp3

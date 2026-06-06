@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from spotipy.oauth2 import SpotifyOAuth
 
 from spotify_dl.config import ConfigManager
+from spotify_dl.logging import get_logger
 from spotify_dl.models import AppConfig
+
+logger = get_logger("auth")
 
 USER_SCOPES = (
     "playlist-read-private playlist-read-collaborative "
@@ -31,6 +34,7 @@ class AuthManager:
         self.config_manager = config_manager
 
     def login(self) -> str:
+        logger.info("Login attempt started")
         oauth = build_spotify_oauth(self.config, open_browser=True)
         token_info = oauth.get_access_token(as_dict=True, check_cache=False)
         expiry = datetime.fromtimestamp(token_info["expires_at"], tz=timezone.utc)
@@ -40,7 +44,9 @@ class AuthManager:
             token_expiry=expiry,
             scope=token_info.get("scope") or USER_SCOPES,
         )
+        logger.info("Login successful")
         return "Logged in with Spotify user authentication."
 
     def logout(self) -> None:
+        logger.info("Logout")
         self.config_manager.clear_user_auth()

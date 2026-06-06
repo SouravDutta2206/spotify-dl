@@ -9,7 +9,10 @@ from typing import Literal
 from yt_dlp import YoutubeDL
 
 from spotify_dl.exceptions import DownloadError, YouTubeMatchError
+from spotify_dl.logging import get_logger
 from spotify_dl.models import AppConfig, TrackMetadata, YouTubeMatch
+
+logger = get_logger("youtube")
 
 YtDlpMode = Literal["search", "download"]
 _YT_VIDEO_ID_RE = re.compile(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})")
@@ -113,6 +116,7 @@ class YouTubeSearcher:
 
     def find_best_match(self, track: TrackMetadata) -> YouTubeMatch:
         query = self.build_query(track)
+        logger.debug("Search query: %s", query)
         options = build_yt_dlp_options(mode="search", verbose=self.verbose)
         with YoutubeDL(options) as ydl:
             data = ydl.extract_info(f"ytsearch10:{query}", download=False)
@@ -120,8 +124,11 @@ class YouTubeSearcher:
         candidates = [self._score(entry, track, query) for entry in entries if entry]
         candidates = [candidate for candidate in candidates if candidate.match_score >= self.min_score]
         if not candidates:
+            logger.warning("No match (above %d) for: %s", self.min_score, query)
             raise YouTubeMatchError("No matching YouTube video found")
-        return max(candidates, key=lambda candidate: candidate.match_score)
+        best = max(candidates, key=lambda candidate: candidate.match_score)
+        logger.info("Best match: video_id=%s, score=%d, candidates=%d", best.video_id, best.match_score, len(candidates))
+        return best
 
     def _score(self, entry: dict, track: TrackMetadata, query: str) -> YouTubeMatch:
         duration = int(entry.get("duration") or 0)
@@ -167,6 +174,7 @@ class Downloader:
                 output_template=output_template,
             )
             try:
+                logger.info("yt-dlp download started: %s", match.youtube_url)
                 with YoutubeDL(options) as ydl:
                     ydl.download([match.youtube_url])
             except Exception as exc:
@@ -175,10 +183,13 @@ class Downloader:
                     self.config.youtube_cookie_file or self.config.youtube_cookie_browser
                 ):
                     message += "\nTip: spotify-dl config set youtube-cookies-from chrome"
+                logger.error("yt-dlp download failed: %s", message)
                 raise DownloadError(f"Download failed: {message}") from exc
             files = list(temp_dir.glob("*.mp3"))
             if not files:
+                logger.error("yt-dlp produced no MP3 for %s", match.youtube_url)
                 raise DownloadError("Download failed: yt-dlp did not produce an MP3")
+            logger.debug("yt-dlp download complete: %s", files[0])
             return files[0]
         except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)

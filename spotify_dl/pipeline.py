@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import sys
@@ -11,11 +12,15 @@ from spotify_dl.cli_utils import normalize_download_options, spotify_client_from
 from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import SpotifyError
 from spotify_dl.filesystem import FileSystem
+from spotify_dl.logging import get_logger
 from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata
 from spotify_dl.source_cache import CoverCache
 from spotify_dl.spotify import SpotifyClient, parse_spotify_url
 from spotify_dl.tagger import Tagger
 from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
+
+logger = get_logger("pipeline")
+_failed_logger = logging.getLogger("spotify_dl.failed")
 
 
 COLLECTION_MAX_WORKERS = 10
@@ -46,21 +51,29 @@ class DownloadPipeline:
         dry_run: bool = False,
         youtube_url: str | None = None,
     ) -> DownloadResult:
+        label = f"\"{track.title}\" by {track.artists[0]} ({track.spotify_id})"
         final_path = self.filesystem.get_track_path(track)
         if skip_existing and final_path.exists():
+            logger.debug("Skipped (exists): %s", label)
             self._copy_to_playlist(final_path, track)
             return DownloadResult(track, None, final_path, "skipped", None)
         if dry_run:
+            logger.debug("Skipped (dry run): %s", label)
             return DownloadResult(track, None, final_path, "skipped", None)
         try:
+            logger.debug("Processing: %s", label)
             match = make_direct_match(youtube_url) if youtube_url else self.searcher.find_best_match(track)
+            logger.info("Matched: %s -> %s (score=%d)", label, match.youtube_url, match.match_score)
             temp_path = self.downloader.download_mp3(match)
             tagged = self.tagger.tag(temp_path, final_path, track)
             if temp_path.parent.exists():
                 shutil.rmtree(temp_path.parent, ignore_errors=True)
             self._copy_to_playlist(tagged, track)
+            logger.info("Done: %s -> %s", label, tagged)
             return DownloadResult(track, match, tagged, "done", None)
         except Exception as exc:
+            logger.error("Failed: %s — %s", label, exc)
+            _failed_logger.info("%s - %s | %s", track.artists[0], track.title, exc)
             return DownloadResult(track, None, final_path, "failed", str(exc))
 
     def _copy_to_playlist(self, source: Path, track: TrackMetadata) -> None:
@@ -82,14 +95,20 @@ def run_download(urls: str | list[str], options: dict) -> None:
     config, spotify = spotify_client_from_options(download_options)
     youtube_link = download_options.get("youtube_link")
 
+    url_desc = f"{len(urls)} URL(s)" if isinstance(urls, list) else urls
+    logger.info("run_download: %s, skip_existing=%s, quality=%s",
+                url_desc, download_options.get("skip_existing"), config.audio_quality)
+
     if isinstance(urls, list):
         # Batch track resolution
         source_type = "batch"
         track_ids = [parse_spotify_url(u)[1] for u in urls if parse_spotify_url(u)[1]]
         print(f"\n  Batch resolving {len(track_ids)} tracks...")
+        logger.info("Batch resolving %d tracks", len(track_ids))
         try:
             tracks = spotify.batch_resolve_tracks(track_ids)
         except SpotifyError as exc:
+            logger.warning("Batch resolve failed (%s), falling back to individual", exc)
             print(f"  Batch resolve failed ({exc}), falling back to individual resolution...")
             for url in urls:
                 run_download(url, options)
@@ -138,6 +157,7 @@ def download_tracks(
     cover_cache: CoverCache | None = None,
 ) -> None:
     """Print source header, dispatch to process_tracks, print summary."""
+    logger.info("%s: %s — %d track(s)", source_type.title(), source_name, len(tracks))
     print(f"\n  {source_type.title()}: {source_name}")
     print(f"  Tracks: {len(tracks)}\n")
     make_playlist = options.get("make_playlist", False)
@@ -152,9 +172,16 @@ def download_tracks(
     )
     done = sum(1 for result in results if result.status == "done")
     skipped = sum(1 for result in results if result.status == "skipped")
-    failed = sum(1 for result in results if result.status == "failed")
-    print(f"\n  Done. {done} downloaded, {skipped} skipped, {failed} failed.")
+    failed_results = [r for r in results if r.status == "failed"]
+    logger.info("Summary: %d downloaded, %d skipped, %d failed", done, skipped, len(failed_results))
+    print(f"\n  Done. {done} downloaded, {skipped} skipped, {len(failed_results)} failed.")
     print(f"  Output: {config.output_directory}")
+
+    if failed_results:
+        print("\n  Failed tracks:")
+        for r in failed_results:
+            artist = r.track.artists[0] if r.track.artists else "Unknown"
+            print(f"    \u2022 {artist} - {r.track.title}: {r.error}")
 
 
 def process_tracks(
@@ -198,6 +225,7 @@ def process_tracks(
         return results
 
     workers = min(max(1, int(config.concurrency)), COLLECTION_MAX_WORKERS, len(tracks))
+    logger.debug("Processing %s with %d concurrent workers", source_type, workers)
     print(f"  Processing {source_type} with {workers} concurrent workers.\n")
     results: list[DownloadResult] = []
     completed = 0
@@ -240,4 +268,3 @@ def print_track_result(index: int, total: int, result: DownloadResult) -> None:
     print(f"  [{index}/{total}] {result.track.title} ... {marker}")
     if result.error:
         print(f"      {result.error}", file=sys.stderr)
-
