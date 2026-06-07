@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spotify-dl"
-version = "0.1.47"
+version = "0.1.48"
 description = "Download Spotify tracks, albums, and playlists as tagged MP3 files."
 readme = "README.md"
 requires-python = ">=3.11"

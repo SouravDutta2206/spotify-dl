@@ -13,9 +13,9 @@ from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import SpotifyError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.logging import get_logger
-from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata
+from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata, YouTubeMatch
 from spotify_dl.source_cache import CoverCache, SourceCache
-from spotify_dl.spotify import SpotifyClient, parse_spotify_url
+from spotify_dl.spotify import parse_spotify_url
 from spotify_dl.tagger import Tagger
 from spotify_dl.youtube import Downloader, YouTubeSearcher, make_direct_match
 
@@ -31,34 +31,83 @@ class DownloadPipeline:
     def __init__(
         self,
         config: AppConfig,
+        options: dict,
         *,
         cover_cache: CoverCache | None = None,
         source_cache: SourceCache | None = None,
-        verbose: bool = False,
-        playlist_name: str | None = None,
     ) -> None:
         self.config = config
+        self.options = options
+        self.skip_existing = bool(options["skip_existing"])
+        self.dry_run = bool(options["dry_run"])
+        self.youtube_link = options.get("youtube_link")
+        self.youtube_link_map = options.get("youtube_link_map") or {}
+        self.source_cache = source_cache
         self.filesystem = FileSystem(config.output_directory)
-        self.searcher = YouTubeSearcher(config=config, verbose=verbose)
-        self.downloader = Downloader(config, verbose=verbose)
+        self.searcher = YouTubeSearcher(config=config, verbose=bool(options["verbose"]))
+        self.downloader = Downloader(config, verbose=bool(options["verbose"]))
         self.tagger = Tagger(cover_cache=cover_cache)
-        self.playlist_name = playlist_name
+        self.playlist_name: str | None = None
+
+    def persist_youtube_links(
+        self,
+        tracks: list[TrackMetadata],
+        *,
+        youtube_link: str | None = None,
+        youtube_link_map: dict[str, str | None] | None = None,
+    ) -> None:
+        if not self.source_cache:
+            return
+        wrote_cache = False
+        for track in tracks:
+            link = youtube_link or (youtube_link_map or {}).get(track.spotify_id)
+            if not link:
+                continue
+            self.source_cache.write_track(track, youtube_link=link)
+            wrote_cache = True
+        if wrote_cache:
+            self.source_cache.flush_tracks()
+
+    def download_source(
+        self,
+        *,
+        source_type: str,
+        source_name: str,
+        tracks: list[TrackMetadata],
+    ) -> None:
+        logger.info("%s: %s — %d track(s)", source_type.title(), source_name, len(tracks))
+        print(f"\n  {source_type.title()}: {source_name}")
+        print(f"  Tracks: {len(tracks)}\n")
+        make_playlist = self.options.get("make_playlist", False)
+        self.playlist_name = source_name if make_playlist and source_type == "playlist" else None
+
+        results = self._process_tracks(source_type=source_type, tracks=tracks)
+        done = sum(1 for result in results if result.status == "done")
+        skipped = sum(1 for result in results if result.status == "skipped")
+        failed_results = [r for r in results if r.status == "failed"]
+        logger.info("Summary: %d downloaded, %d skipped, %d failed", done, skipped, len(failed_results))
+        print(f"\n  Done. {done} downloaded, {skipped} skipped, {len(failed_results)} failed.")
+        print(f"  Output: {self.config.output_directory}")
+
+        if failed_results:
+            print("\n  Failed tracks:")
+            for result in failed_results:
+                artist = result.track.artists[0] if result.track.artists else "Unknown"
+                print(f"    \u2022 {artist} - {result.track.title}: {result.error}")
 
     def process_track(
         self,
         track: TrackMetadata,
         *,
-        skip_existing: bool = True,
-        dry_run: bool = False,
         youtube_match: YouTubeMatch | None = None,
     ) -> DownloadResult:
         label = f"\"{track.title}\" by {track.artists[0]} ({track.spotify_id})"
         final_path = self.filesystem.get_track_path(track)
-        if skip_existing and final_path.exists():
+        if self.skip_existing and self.filesystem.exists(track):
             logger.debug("Skipped (exists): %s", label)
             self._copy_to_playlist(final_path, track)
             return DownloadResult(track, None, final_path, "skipped", None)
-        if dry_run:
+        if self.dry_run:
             logger.debug("Skipped (dry run): %s", label)
             return DownloadResult(track, None, final_path, "skipped", None)
         try:
@@ -76,6 +125,126 @@ class DownloadPipeline:
             logger.error("Failed: %s — %s", label, exc)
             _failed_logger.info("%s - %s | %s", track.artists[0], track.title, exc)
             return DownloadResult(track, None, final_path, "failed", str(exc))
+
+    def _resolve_youtube_matches(
+        self,
+        tracks: list[TrackMetadata],
+    ) -> tuple[dict[str, YouTubeMatch], dict[str, str]]:
+        resolved_matches: dict[str, YouTubeMatch] = {}
+        failed_searches: dict[str, str] = {}
+        tracks_to_search: list[TrackMetadata] = []
+
+        for track in tracks:
+            override = self.youtube_link_map.get(track.spotify_id) or self.youtube_link
+            if override:
+                resolved_matches[track.spotify_id] = make_direct_match(override)
+                continue
+
+            cached = self.source_cache.read_track(track.spotify_id) if self.source_cache else None
+            if cached and cached[1]:
+                resolved_matches[track.spotify_id] = make_direct_match(cached[1])
+                continue
+
+            tracks_to_search.append(track)
+
+        if self.skip_existing:
+            tracks_to_search = [track for track in tracks_to_search if not self.filesystem.exists(track)]
+
+        if not tracks_to_search or self.dry_run:
+            return resolved_matches, failed_searches
+
+        print(f"  Searching YouTube for {len(tracks_to_search)} track(s)...\n")
+        for index, track in enumerate(tracks_to_search, start=1):
+            label = f"{track.artists[0]} - {track.title}"
+            try:
+                time.sleep(1.0)
+                match = self.searcher.find_best_match(track)
+                resolved_matches[track.spotify_id] = match
+                print(f"  [{index}/{len(tracks_to_search)}] Matched: {label}")
+                if self.source_cache:
+                    self.source_cache.write_track(track, youtube_link=match.youtube_url)
+            except Exception as exc:
+                logger.error("Search failed for %s: %s", label, exc)
+                print(f"  [{index}/{len(tracks_to_search)}] Search failed: {label} — {exc}")
+                failed_searches[track.spotify_id] = str(exc)
+
+        if self.source_cache:
+            self.source_cache.flush_tracks()
+        self.searcher.close()
+        return resolved_matches, failed_searches
+
+    def _process_or_fail(
+        self,
+        track: TrackMetadata,
+        *,
+        resolved_matches: dict[str, YouTubeMatch],
+        failed_searches: dict[str, str],
+    ) -> DownloadResult:
+        if track.spotify_id in failed_searches:
+            return DownloadResult(track, None, self.filesystem.get_track_path(track), "failed", failed_searches[track.spotify_id])
+        return self.process_track(track, youtube_match=resolved_matches.get(track.spotify_id))
+
+    def _process_tracks(
+        self,
+        *,
+        source_type: str,
+        tracks: list[TrackMetadata],
+    ) -> list[DownloadResult]:
+        resolved_matches, failed_searches = self._resolve_youtube_matches(tracks)
+
+        if self.dry_run or len(tracks) <= 1:
+            results = []
+            try:
+                for index, track in enumerate(tracks, start=1):
+                    result = self._process_or_fail(
+                        track,
+                        resolved_matches=resolved_matches,
+                        failed_searches=failed_searches,
+                    )
+                    results.append(result)
+                    print_track_result(index, len(tracks), result)
+            except KeyboardInterrupt:
+                print("\n  Aborted.")
+                raise SystemExit(130)
+            return results
+
+        workers = min(max(1, int(self.config.concurrency)), COLLECTION_MAX_WORKERS, len(tracks))
+        logger.debug("Downloading %s with %d concurrent workers", source_type, workers)
+        print(f"\n  Downloading {source_type} with {workers} concurrent workers.\n")
+        results: list[DownloadResult] = []
+        completed = 0
+        executor = ThreadPoolExecutor(max_workers=workers)
+        futures: dict = {}
+        for index, track in enumerate(tracks):
+            future = executor.submit(
+                self._process_or_fail,
+                track,
+                resolved_matches=resolved_matches,
+                failed_searches=failed_searches,
+            )
+            futures[future] = track
+            if (index + 1) % workers == 0 and (index + 1) < len(tracks):
+                time.sleep(1.0)
+        try:
+            futures_list = list(futures.keys())
+            while futures_list:
+                for future in [f for f in futures_list if f.done()]:
+                    completed += 1
+                    result = future.result()
+                    results.append(result)
+                    print_track_result(completed, len(tracks), result)
+                    futures_list.remove(future)
+                if futures_list:
+                    time.sleep(0.05)
+        except KeyboardInterrupt:
+            for future in futures:
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+            print("\n  Aborted.")
+            os._exit(130)
+        else:
+            executor.shutdown(wait=True)
+        return results
 
     def _copy_to_playlist(self, source: Path, track: TrackMetadata) -> None:
         if not self.playlist_name:
@@ -95,6 +264,12 @@ def run_download(urls: str | list[str], options: dict) -> None:
     download_options = normalize_download_options(options)
     config, spotify = spotify_client_from_options(download_options)
     youtube_link = download_options.get("youtube_link")
+    pipeline = DownloadPipeline(
+        config,
+        download_options,
+        cover_cache=spotify.cover_cache,
+        source_cache=spotify.source_cache,
+    )
 
     url_desc = f"{len(urls)} URL(s)" if isinstance(urls, list) else urls
     logger.info("run_download: %s, skip_existing=%s, quality=%s",
@@ -103,7 +278,11 @@ def run_download(urls: str | list[str], options: dict) -> None:
     if isinstance(urls, list):
         # Batch track resolution
         source_type = "batch"
-        track_ids = [parse_spotify_url(u)[1] for u in urls if parse_spotify_url(u)[1]]
+        track_ids = []
+        for url in urls:
+            _, track_id = parse_spotify_url(url)
+            if track_id:
+                track_ids.append(track_id)
         print(f"\n  Batch resolving {len(track_ids)} tracks...")
         logger.info("Batch resolving %d tracks", len(track_ids))
         try:
@@ -115,216 +294,28 @@ def run_download(urls: str | list[str], options: dict) -> None:
                 run_download(url, options)
             return
         source_name = f"Batch Download ({len(tracks)} tracks)"
-        # Persist youtube links to the track cache (mirrors single-track path)
-        yt_map = download_options.get("youtube_link_map") or {}
-        for track in tracks:
-            yt_link = yt_map.get(track.spotify_id)
-            if yt_link:
-                spotify.source_cache.write_track(track, youtube_link=yt_link)
-        spotify.source_cache.flush_tracks()
+        pipeline.persist_youtube_links(
+            tracks,
+            youtube_link_map=download_options.get("youtube_link_map") or {},
+        )
     else:
         # Single URL resolution
         source_type, source_name, tracks = spotify.resolve_url(urls)
         if source_type == "track" and tracks:
-            track = tracks[0]
-            if youtube_link:
-                spotify.source_cache.write_track(track, youtube_link=youtube_link)
-                spotify.source_cache.flush_tracks()
-            else:
-                cached = spotify.source_cache.read_track(track.spotify_id)
-                youtube_link = cached[1] if cached else None
-                download_options["youtube_link"] = youtube_link
+            pipeline.persist_youtube_links(
+                tracks,
+                youtube_link=youtube_link,
+                youtube_link_map=download_options.get("youtube_link_map") or {},
+            )
 
     if len(tracks) > 1:
         CoverResolver(spotify.cover_cache).prefetch(tracks)
 
-    download_tracks(
-        config=config,
+    pipeline.download_source(
         source_type=source_type,
         source_name=source_name,
         tracks=tracks,
-        options=download_options,
-        cover_cache=spotify.cover_cache,
-        source_cache=spotify.source_cache,
     )
-
-
-def download_tracks(
-    *,
-    config: AppConfig,
-    source_type: str,
-    source_name: str,
-    tracks: list[TrackMetadata],
-    options: dict,
-    cover_cache: CoverCache | None = None,
-    source_cache: SourceCache | None = None,
-) -> None:
-    """Print source header, dispatch to process_tracks, print summary."""
-    logger.info("%s: %s — %d track(s)", source_type.title(), source_name, len(tracks))
-    print(f"\n  {source_type.title()}: {source_name}")
-    print(f"  Tracks: {len(tracks)}\n")
-    make_playlist = options.get("make_playlist", False)
-    playlist_name = source_name if make_playlist and source_type == "playlist" else None
-    results = process_tracks(
-        config=config,
-        source_type=source_type,
-        tracks=tracks,
-        options=options,
-        cover_cache=cover_cache,
-        source_cache=source_cache,
-        playlist_name=playlist_name,
-    )
-    done = sum(1 for result in results if result.status == "done")
-    skipped = sum(1 for result in results if result.status == "skipped")
-    failed_results = [r for r in results if r.status == "failed"]
-    logger.info("Summary: %d downloaded, %d skipped, %d failed", done, skipped, len(failed_results))
-    print(f"\n  Done. {done} downloaded, {skipped} skipped, {len(failed_results)} failed.")
-    print(f"  Output: {config.output_directory}")
-
-    if failed_results:
-        print("\n  Failed tracks:")
-        for r in failed_results:
-            artist = r.track.artists[0] if r.track.artists else "Unknown"
-            print(f"    \u2022 {artist} - {r.track.title}: {r.error}")
-
-
-def process_tracks(
-    *,
-    config: AppConfig,
-    source_type: str,
-    tracks: list[TrackMetadata],
-    options: dict,
-    cover_cache: CoverCache | None = None,
-    source_cache: SourceCache | None = None,
-    playlist_name: str | None = None,
-) -> list[DownloadResult]:
-    """Resolve YouTube URLs serially, then download concurrently."""
-    pipeline = DownloadPipeline(
-        config,
-        cover_cache=cover_cache,
-        source_cache=source_cache,
-        verbose=options["verbose"],
-        playlist_name=playlist_name,
-    )
-
-    youtube_link = options.get("youtube_link")
-    yt_map = options.get("youtube_link_map") or {}
-
-    # ── Phase 1: Resolve YouTube matches serially ──────────────────────────
-    # Build a map of spotify_id -> YouTubeMatch for every track.
-    # Searches happen one at a time to avoid YouTube rate-limiting.
-    resolved_matches: dict[str, YouTubeMatch] = {}
-    failed_searches: dict[str, str] = {}
-    tracks_to_search: list[TrackMetadata] = []
-
-    for track in tracks:
-        # Priority: explicit CLI override > source cache > needs search
-        override = yt_map.get(track.spotify_id) or youtube_link
-        if override:
-            resolved_matches[track.spotify_id] = make_direct_match(override)
-        elif source_cache:
-            cached = source_cache.read_track(track.spotify_id)
-            if cached and cached[1]:
-                resolved_matches[track.spotify_id] = make_direct_match(cached[1])
-            else:
-                tracks_to_search.append(track)
-        else:
-            tracks_to_search.append(track)
-
-    # Filter out tracks that will be skipped (already exist on disk)
-    if options["skip_existing"]:
-        fs = pipeline.filesystem
-        tracks_to_search = [t for t in tracks_to_search if not fs.get_track_path(t).exists()]
-
-    if tracks_to_search and not options["dry_run"]:
-        print(f"  Searching YouTube for {len(tracks_to_search)} track(s)...\n")
-        for index, track in enumerate(tracks_to_search, start=1):
-            label = f"{track.artists[0]} - {track.title}"
-            try:
-                time.sleep(1.0)
-                match = pipeline.searcher.find_best_match(track)
-                resolved_matches[track.spotify_id] = match
-                print(f"  [{index}/{len(tracks_to_search)}] Matched: {label}")
-                if source_cache:
-                    source_cache.write_track(track, youtube_link=match.youtube_url)
-            except Exception as exc:
-                logger.error("Search failed for %s: %s", label, exc)
-                print(f"  [{index}/{len(tracks_to_search)}] Search failed: {label} — {exc}")
-                failed_searches[track.spotify_id] = str(exc)
-        # Flush cache once after all searches complete
-        if source_cache:
-            source_cache.flush_tracks()
-        pipeline.searcher.close()
-
-    # ── Phase 2: Download + tag (concurrently for multi-track) ─────────────
-    def _make_result(track: TrackMetadata, error: str) -> DownloadResult:
-        return DownloadResult(track, None, pipeline.filesystem.get_track_path(track), "failed", error)
-
-    if options["dry_run"] or len(tracks) <= 1:
-        results = []
-        try:
-            for index, track in enumerate(tracks, start=1):
-                if track.spotify_id in failed_searches:
-                    result = _make_result(track, failed_searches[track.spotify_id])
-                    results.append(result)
-                    print_track_result(index, len(tracks), result)
-                    continue
-
-                result = pipeline.process_track(
-                    track,
-                    skip_existing=options["skip_existing"],
-                    dry_run=options["dry_run"],
-                    youtube_match=resolved_matches.get(track.spotify_id),
-                )
-                results.append(result)
-                print_track_result(index, len(tracks), result)
-        except KeyboardInterrupt:
-            print("\n  Aborted.")
-            raise SystemExit(130)
-        return results
-
-    workers = min(max(1, int(config.concurrency)), COLLECTION_MAX_WORKERS, len(tracks))
-    logger.debug("Downloading %s with %d concurrent workers", source_type, workers)
-    print(f"\n  Downloading {source_type} with {workers} concurrent workers.\n")
-    results: list[DownloadResult] = []
-    completed = 0
-    executor = ThreadPoolExecutor(max_workers=workers)
-    futures: dict = {}
-    for i, track in enumerate(tracks):
-        if track.spotify_id in failed_searches:
-            future = executor.submit(_make_result, track, failed_searches[track.spotify_id])
-        else:
-            future = executor.submit(
-                pipeline.process_track,
-                track,
-                skip_existing=options["skip_existing"],
-                dry_run=options["dry_run"],
-                youtube_match=resolved_matches.get(track.spotify_id),
-            )
-        futures[future] = track
-        # Pause after submitting a full wave before queuing the next
-        if (i + 1) % workers == 0 and (i + 1) < len(tracks):
-            time.sleep(1.0)
-    try:
-        futures_list = list(futures.keys())
-        while futures_list:
-            for future in [f for f in futures_list if f.done()]:
-                completed += 1
-                result = future.result()
-                results.append(result)
-                print_track_result(completed, len(tracks), result)
-                futures_list.remove(future)
-            if futures_list:
-                time.sleep(0.05)
-    except KeyboardInterrupt:
-        for future in futures:
-            future.cancel()
-        executor.shutdown(wait=False, cancel_futures=True)
-        print("\n  Aborted.")
-        os._exit(130)
-    else:
-        executor.shutdown(wait=True)
-    return results
 
 
 def print_track_result(index: int, total: int, result: DownloadResult) -> None:
@@ -333,4 +324,3 @@ def print_track_result(index: int, total: int, result: DownloadResult) -> None:
     print(f"  [{index}/{total}] {result.track.title} ... {marker}")
     if result.error:
         print(f"      {result.error}", file=sys.stderr)
-

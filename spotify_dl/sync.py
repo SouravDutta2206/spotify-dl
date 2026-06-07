@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from spotify_dl.pipeline import download_tracks
+from spotify_dl.pipeline import DownloadPipeline
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.logging import get_logger
@@ -105,11 +105,14 @@ def _sync_playlist(
         logger.info("Sync: %s — gap fill (missing files)", playlist_name)
         print(f"  Gap fill: {playlist_name} (missing files)")
 
-    download_tracks(
-        config=config,
+    pipeline = DownloadPipeline(
+        config,
+        download_options,
+        cover_cache=spotify.cover_cache,
+        source_cache=spotify.source_cache,
+    )
+    pipeline.download_source(
         source_type="playlist",
         source_name=playlist_name,
         tracks=tracks,
-        options=download_options,
-        cover_cache=spotify.cover_cache,
     )

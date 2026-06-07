@@ -137,7 +137,7 @@ class YouTubeSearcher:
         query = self.build_query(track)
         logger.debug("Search query: %s", query)
         ydl = self._get_ydl()
-        data = ydl.extract_info(f"ytsearch3:{query}", download=False)
+        data = ydl.extract_info(f"ytsearch10:{query}", download=False)
         entries = (data or {}).get("entries") or []
         candidates = [self._score(entry, track, query) for entry in entries if entry]
         candidates = [candidate for candidate in candidates if candidate.match_score >= self.min_score]

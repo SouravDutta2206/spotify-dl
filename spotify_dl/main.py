@@ -16,7 +16,7 @@ from spotify_dl.cli_utils import (
 from spotify_dl.config import ConfigManager
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.logging import get_logger, setup_session_logging
-from spotify_dl.manifest import DownloadManifest, ManifestParseError, parse_download_manifest
+from spotify_dl.manifest import ManifestParseError, parse_download_manifest
 from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download
 from spotify_dl.sync import run_sync
 from spotify_dl.spotify import BATCH_TRACK_THRESHOLD, parse_spotify_url
