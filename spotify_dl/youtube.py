@@ -86,7 +86,7 @@ def build_yt_dlp_options(
         options.update(
             {
                 "skip_download": True,
-                "extract_flat": False,
+                "extract_flat": "in_playlist",
             }
         )
         return options
@@ -115,6 +115,20 @@ class YouTubeSearcher:
         self.config = config
         self.min_score = min_score
         self.verbose = verbose
+        self._ydl_options = build_yt_dlp_options(mode="search", config=config, verbose=verbose)
+        self._ydl: YoutubeDL | None = None
+
+    def _get_ydl(self) -> YoutubeDL:
+        """Lazy-init and reuse a single YoutubeDL instance for all searches."""
+        if self._ydl is None:
+            self._ydl = YoutubeDL(self._ydl_options)
+        return self._ydl
+
+    def close(self) -> None:
+        """Clean up the reusable YoutubeDL instance."""
+        if self._ydl is not None:
+            self._ydl.close()
+            self._ydl = None
 
     def build_query(self, track: TrackMetadata) -> str:
         return f"{track.artists[0]} - {track.title} lyrics"
@@ -122,9 +136,8 @@ class YouTubeSearcher:
     def find_best_match(self, track: TrackMetadata) -> YouTubeMatch:
         query = self.build_query(track)
         logger.debug("Search query: %s", query)
-        options = build_yt_dlp_options(mode="search", config=self.config, verbose=self.verbose)
-        with YoutubeDL(options) as ydl:
-            data = ydl.extract_info(f"ytsearch10:{query}", download=False)
+        ydl = self._get_ydl()
+        data = ydl.extract_info(f"ytsearch3:{query}", download=False)
         entries = (data or {}).get("entries") or []
         candidates = [self._score(entry, track, query) for entry in entries if entry]
         candidates = [candidate for candidate in candidates if candidate.match_score >= self.min_score]

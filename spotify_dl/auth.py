@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from spotipy.oauth2 import SpotifyOAuth
+from spotipy.cache_handler import MemoryCacheHandler
 
 from spotify_dl.config import ConfigManager
 from spotify_dl.logging import get_logger
@@ -25,6 +26,7 @@ def build_spotify_oauth(config: AppConfig, *, open_browser: bool) -> SpotifyOAut
         redirect_uri=f"http://127.0.0.1:{config.auth_callback_port}/callback",
         scope=USER_SCOPES,
         open_browser=open_browser,
+        cache_handler=MemoryCacheHandler(),
     )
 
 
