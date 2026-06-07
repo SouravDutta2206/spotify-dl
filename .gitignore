@@ -10,4 +10,5 @@ htmlcov/
 .env
 dist/
 build/
+.venv/
 
