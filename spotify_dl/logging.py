@@ -47,6 +47,7 @@ def setup_session_logging() -> SessionLog:
 
     # ── Dedicated failed-tracks logger ────────────────────────────────────
     failed = logging.getLogger("spotify_dl.failed")
+    failed.setLevel(logging.DEBUG)
     failed.propagate = False  # don't duplicate into the full log
 
     failed_handler = logging.FileHandler(failed_path, encoding="utf-8")

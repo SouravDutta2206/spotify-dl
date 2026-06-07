@@ -93,6 +93,7 @@ class DownloadPipeline:
             print("\n  Failed tracks:")
             for result in failed_results:
                 artist = result.track.artists[0] if result.track.artists else "Unknown"
+                _failed_logger.info("%s - %s | %s", artist, result.track.title, result.error)
                 print(f"    \u2022 {artist} - {result.track.title}: {result.error}")
 
     def process_track(
