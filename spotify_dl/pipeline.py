@@ -50,7 +50,7 @@ class DownloadPipeline:
         *,
         skip_existing: bool = True,
         dry_run: bool = False,
-        youtube_url: str | None = None,
+        youtube_match: YouTubeMatch | None = None,
     ) -> DownloadResult:
         label = f"\"{track.title}\" by {track.artists[0]} ({track.spotify_id})"
         final_path = self.filesystem.get_track_path(track)
@@ -63,7 +63,7 @@ class DownloadPipeline:
             return DownloadResult(track, None, final_path, "skipped", None)
         try:
             logger.debug("Processing: %s", label)
-            match = make_direct_match(youtube_url) if youtube_url else self.searcher.find_best_match(track)
+            match = youtube_match or self.searcher.find_best_match(track)
             logger.info("Matched: %s -> %s (score=%d)", label, match.youtube_url, match.match_score)
             temp_path = self.downloader.download_mp3(match)
             tagged = self.tagger.tag(temp_path, final_path, track)
@@ -210,21 +210,22 @@ def process_tracks(
     youtube_link = options.get("youtube_link")
     yt_map = options.get("youtube_link_map") or {}
 
-    # ── Phase 1: Resolve YouTube URLs serially ─────────────────────────────
-    # Build a map of spotify_id -> youtube_url for every track.
+    # ── Phase 1: Resolve YouTube matches serially ──────────────────────────
+    # Build a map of spotify_id -> YouTubeMatch for every track.
     # Searches happen one at a time to avoid YouTube rate-limiting.
-    resolved_urls: dict[str, str | None] = {}
+    resolved_matches: dict[str, YouTubeMatch] = {}
+    failed_searches: dict[str, str] = {}
     tracks_to_search: list[TrackMetadata] = []
 
     for track in tracks:
         # Priority: explicit CLI override > source cache > needs search
         override = yt_map.get(track.spotify_id) or youtube_link
         if override:
-            resolved_urls[track.spotify_id] = override
+            resolved_matches[track.spotify_id] = make_direct_match(override)
         elif source_cache:
             cached = source_cache.read_track(track.spotify_id)
             if cached and cached[1]:
-                resolved_urls[track.spotify_id] = cached[1]
+                resolved_matches[track.spotify_id] = make_direct_match(cached[1])
             else:
                 tracks_to_search.append(track)
         else:
@@ -242,32 +243,38 @@ def process_tracks(
             try:
                 time.sleep(1.0)
                 match = pipeline.searcher.find_best_match(track)
-                resolved_urls[track.spotify_id] = match.youtube_url
+                resolved_matches[track.spotify_id] = match
                 print(f"  [{index}/{len(tracks_to_search)}] Matched: {label}")
                 if source_cache:
                     source_cache.write_track(track, youtube_link=match.youtube_url)
             except Exception as exc:
                 logger.error("Search failed for %s: %s", label, exc)
                 print(f"  [{index}/{len(tracks_to_search)}] Search failed: {label} — {exc}")
-                resolved_urls[track.spotify_id] = None
+                failed_searches[track.spotify_id] = str(exc)
         # Flush cache once after all searches complete
         if source_cache:
             source_cache.flush_tracks()
         pipeline.searcher.close()
 
     # ── Phase 2: Download + tag (concurrently for multi-track) ─────────────
-    def _yt_url(track: TrackMetadata) -> str | None:
-        return resolved_urls.get(track.spotify_id)
+    def _make_result(track: TrackMetadata, error: str) -> DownloadResult:
+        return DownloadResult(track, None, pipeline.filesystem.get_track_path(track), "failed", error)
 
     if options["dry_run"] or len(tracks) <= 1:
         results = []
         try:
             for index, track in enumerate(tracks, start=1):
+                if track.spotify_id in failed_searches:
+                    result = _make_result(track, failed_searches[track.spotify_id])
+                    results.append(result)
+                    print_track_result(index, len(tracks), result)
+                    continue
+
                 result = pipeline.process_track(
                     track,
                     skip_existing=options["skip_existing"],
                     dry_run=options["dry_run"],
-                    youtube_url=_yt_url(track),
+                    youtube_match=resolved_matches.get(track.spotify_id),
                 )
                 results.append(result)
                 print_track_result(index, len(tracks), result)
@@ -284,13 +291,16 @@ def process_tracks(
     executor = ThreadPoolExecutor(max_workers=workers)
     futures: dict = {}
     for i, track in enumerate(tracks):
-        future = executor.submit(
-            pipeline.process_track,
-            track,
-            skip_existing=options["skip_existing"],
-            dry_run=options["dry_run"],
-            youtube_url=_yt_url(track),
-        )
+        if track.spotify_id in failed_searches:
+            future = executor.submit(_make_result, track, failed_searches[track.spotify_id])
+        else:
+            future = executor.submit(
+                pipeline.process_track,
+                track,
+                skip_existing=options["skip_existing"],
+                dry_run=options["dry_run"],
+                youtube_match=resolved_matches.get(track.spotify_id),
+            )
         futures[future] = track
         # Pause after submitting a full wave before queuing the next
         if (i + 1) % workers == 0 and (i + 1) < len(tracks):
