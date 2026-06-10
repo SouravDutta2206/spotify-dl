@@ -191,6 +191,10 @@ class Downloader:
                 verbose=self.verbose,
                 output_template=output_template,
             )
+            if "cookiefile" in options:
+                cookie_copy = temp_dir / "cookies.txt"
+                shutil.copy2(options["cookiefile"], cookie_copy)
+                options["cookiefile"] = str(cookie_copy)
             try:
                 logger.info("yt-dlp download started: %s", match.youtube_url)
                 with YoutubeDL(options) as ydl:

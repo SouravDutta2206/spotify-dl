@@ -13,7 +13,7 @@ dependencies = [
   "python-dotenv>=1.0",
   "requests>=2.31",
   "spotipy>=2.23",
-  "yt-dlp[default]>=2026.3.17",
+  "yt-dlp[default]==2026.3.17",
   "yt-dlp-ejs>=0.8.0",
 ]
 
