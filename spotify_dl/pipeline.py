@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -14,6 +13,7 @@ from spotify_dl.exceptions import SpotifyError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.logging import get_logger
 from spotify_dl.models import AppConfig, DownloadOptions, DownloadResult, TrackMetadata, YouTubeMatch
+from spotify_dl.progress import ProgressBar
 from spotify_dl.source_cache import CoverCache, SourceCache
 from spotify_dl.spotify import parse_spotify_url
 from spotify_dl.tagger import Tagger
@@ -154,20 +154,22 @@ class DownloadPipeline:
         if not tracks_to_search or self.dry_run:
             return resolved_matches, failed_searches
 
-        print(f"  Searching YouTube for {len(tracks_to_search)} track(s)...\n")
-        for index, track in enumerate(tracks_to_search, start=1):
-            label = f"{track.artists[0]} - {track.title}"
-            try:
-                time.sleep(1.0)
-                match = self.searcher.find_best_match(track)
-                resolved_matches[track.spotify_id] = match
-                print(f"  [{index}/{len(tracks_to_search)}] Matched: {label}")
-                if self.source_cache:
-                    self.source_cache.write_track(track, youtube_link=match.youtube_url)
-            except Exception as exc:
-                logger.error("Search failed for %s: %s", label, exc)
-                print(f"  [{index}/{len(tracks_to_search)}] Search failed: {label} — {exc}")
-                failed_searches[track.spotify_id] = str(exc)
+        with ProgressBar(len(tracks_to_search), "Searching YouTube", color="cyan", show_eta=False) as bar:
+            for index, track in enumerate(tracks_to_search, start=1):
+                label = f"{track.artists[0]} - {track.title}"
+                try:
+                    time.sleep(1.0)
+                    match = self.searcher.find_best_match(track)
+                    resolved_matches[track.spotify_id] = match
+                    bar.log(f"  [{index}/{len(tracks_to_search)}] Matched: {label}")
+                    bar.advance(label, status="found")
+                    if self.source_cache:
+                        self.source_cache.write_track(track, youtube_link=match.youtube_url)
+                except Exception as exc:
+                    logger.error("Search failed for %s: %s", label, exc)
+                    bar.log(f"  [{index}/{len(tracks_to_search)}] Search failed: {label} — {exc}")
+                    bar.advance(label, status="failed")
+                    failed_searches[track.spotify_id] = str(exc)
 
         if self.source_cache:
             self.source_cache.flush_tracks()
@@ -196,14 +198,16 @@ class DownloadPipeline:
         if self.dry_run or len(tracks) <= 1:
             results = []
             try:
-                for index, track in enumerate(tracks, start=1):
-                    result = self._process_or_fail(
-                        track,
-                        resolved_matches=resolved_matches,
-                        failed_searches=failed_searches,
-                    )
-                    results.append(result)
-                    print_track_result(index, len(tracks), result)
+                with ProgressBar(len(tracks)) as bar:
+                    for index, track in enumerate(tracks, start=1):
+                        result = self._process_or_fail(
+                            track,
+                            resolved_matches=resolved_matches,
+                            failed_searches=failed_searches,
+                        )
+                        results.append(result)
+                        _log_track_result(bar, index, len(tracks), result)
+                        bar.advance(_track_label(result.track), status=result.status)
             except KeyboardInterrupt:
                 print("\n  Aborted.")
                 raise SystemExit(130)
@@ -213,7 +217,6 @@ class DownloadPipeline:
         logger.debug("Downloading %s with %d concurrent workers", source_type, workers)
         print(f"\n  Downloading {source_type} with {workers} concurrent workers.\n")
         results: list[DownloadResult] = []
-        completed = 0
         executor = ThreadPoolExecutor(max_workers=workers)
         futures: dict = {}
         for index, track in enumerate(tracks):
@@ -228,15 +231,18 @@ class DownloadPipeline:
                 time.sleep(1.0)
         try:
             futures_list = list(futures.keys())
-            while futures_list:
-                for future in [f for f in futures_list if f.done()]:
-                    completed += 1
-                    result = future.result()
-                    results.append(result)
-                    print_track_result(completed, len(tracks), result)
-                    futures_list.remove(future)
-                if futures_list:
-                    time.sleep(0.05)
+            completed = 0
+            with ProgressBar(len(tracks)) as bar:
+                while futures_list:
+                    for future in [f for f in futures_list if f.done()]:
+                        completed += 1
+                        result = future.result()
+                        results.append(result)
+                        _log_track_result(bar, completed, len(tracks), result)
+                        bar.advance(_track_label(result.track), status=result.status)
+                        futures_list.remove(future)
+                    if futures_list:
+                        time.sleep(0.05)
         except KeyboardInterrupt:
             for future in futures:
                 future.cancel()
@@ -317,9 +323,15 @@ def run_download(urls: str | list[str], options: DownloadOptions) -> None:
     )
 
 
-def print_track_result(index: int, total: int, result: DownloadResult) -> None:
-    """Print a single track's outcome to stdout (and errors to stderr)."""
+def _track_label(track: TrackMetadata) -> str:
+    """Build a short display label for a track."""
+    artist = track.artists[0] if track.artists else "Unknown"
+    return f"{artist} - {track.title}"
+
+
+def _log_track_result(bar: ProgressBar, index: int, total: int, result: DownloadResult) -> None:
+    """Print a track's outcome above the progress bar."""
     marker = result.status
-    print(f"  [{index}/{total}] {result.track.title} ... {marker}")
+    bar.log(f"  [{index}/{total}] {result.track.title} ... {marker}")
     if result.error:
-        print(f"      {result.error}", file=sys.stderr)
+        bar.log(f"      {result.error}")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import tempfile
@@ -78,6 +79,10 @@ def build_yt_dlp_options(
         # age gates that the default client cannot.
         "extractor_args": {"youtube": {"player_client": ["default", "web_creator"]}},
     }
+    # Redirect yt-dlp's internal logging to our file-based logger so it
+    # never leaks download progress / ffmpeg messages to the terminal.
+    if not verbose:
+        options["logger"] = logging.getLogger("spotify_dl.ytdlp")
     if js_runtimes := javascript_runtime_options():
         options["js_runtimes"] = js_runtimes
     options.update(cookie_options(config))
