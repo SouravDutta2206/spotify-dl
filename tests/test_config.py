@@ -79,3 +79,46 @@ def test_save_and_clear_user_auth(tmp_path):
     assert raw["spotify"]["user_auth"]["refresh_token"] is None
     assert raw["spotify"]["user_auth"]["token_expiry"] is None
     assert raw["spotify"]["user_auth"]["scope"] is None
+
+
+def test_config_from_options(tmp_path):
+    from spotify_dl.cli_utils import config_from_options
+    from spotify_dl.models import DownloadOptions
+
+    manager = ConfigManager(tmp_path / "config.json")
+    # 1. Test with dict
+    config, _ = config_from_options(
+        {
+            "client_id": "cli-id",
+            "client_secret": "cli-secret",
+            "output": str(tmp_path / "cli-music"),
+            "quality": "192",
+            "youtube_cookies_from": "chrome",
+            "concurrency": 4,
+        },
+        manager=manager
+    )
+    assert config.spotify_client_id == "cli-id"
+    assert config.spotify_client_secret == "cli-secret"
+    assert config.output_directory == tmp_path / "cli-music"
+    assert config.audio_quality == "192"
+    assert config.youtube_cookie_browser == "chrome"
+    assert config.concurrency == 4
+
+    # 2. Test with DownloadOptions (dataclass)
+    options = DownloadOptions(
+        client_id="opts-id",
+        client_secret="opts-secret",
+        output=str(tmp_path / "opts-music"),
+        quality="320",
+        youtube_cookies_from="firefox",
+        concurrency=10,
+    )
+    config, _ = config_from_options(options, manager=manager)
+    assert config.spotify_client_id == "opts-id"
+    assert config.spotify_client_secret == "opts-secret"
+    assert config.output_directory == tmp_path / "opts-music"
+    assert config.audio_quality == "320"
+    assert config.youtube_cookie_browser == "firefox"
+    assert config.concurrency == 10
+

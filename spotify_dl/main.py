@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 import time
+from dataclasses import replace
 from typing import Any
 
 from spotify_dl.auth import AuthManager
@@ -11,12 +12,14 @@ from spotify_dl.cli_utils import (
     _CONFIG_KEY_MAP,
     _CONFIG_VALIDATORS,
     build_parser,
+    normalize_download_options,
     spotify_client_from_options,
 )
 from spotify_dl.config import ConfigManager
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.logging import get_logger, setup_session_logging
 from spotify_dl.manifest import ManifestParseError, parse_download_manifest
+from spotify_dl.models import DownloadOptions
 from spotify_dl.pipeline import COLLECTION_SOURCE_TYPES, run_download
 from spotify_dl.sync import run_sync
 from spotify_dl.spotify import BATCH_TRACK_THRESHOLD, parse_spotify_url
@@ -167,11 +170,17 @@ def _handle_profile(args: argparse.Namespace) -> None:
     print(f"Explicit filter: {profile.explicit_filter_enabled}")
 
 
+def _base_opts(args: argparse.Namespace) -> DownloadOptions:
+    """Build a DownloadOptions from parsed CLI args with youtube fields reset."""
+    opts = normalize_download_options(vars(args))
+    opts.youtube_link = None
+    opts.youtube_link_map = None
+    return opts
+
+
 def _download_all_playlists(args: argparse.Namespace) -> None:
     """Fetch all user playlists and download each through the standard pipeline."""
-    opts = dict(vars(args))
-    opts["youtube_link"] = None
-    opts["youtube_link_map"] = None
+    opts = _base_opts(args)
 
     _, spotify = spotify_client_from_options(opts)
     playlists = spotify.list_user_playlists()
@@ -201,9 +210,7 @@ def _dispatch_download(args: argparse.Namespace) -> None:
         _download_all_playlists(args)
         return
 
-    opts = dict(vars(args))
-    opts["youtube_link"] = None
-    opts["youtube_link_map"] = None
+    opts = _base_opts(args)
 
     # ── Normalize input source ────────────────────────────────────────────
     if args.from_file:
@@ -212,24 +219,28 @@ def _dispatch_download(args: argparse.Namespace) -> None:
             or parse_download_manifest(args.from_file)
         )
         urls = [t.spotify_url for t in manifest.tracks] + manifest.collections
-        yt_pairs = {
-            parse_spotify_url(t.spotify_url)[1]: t.youtube_url
+        yt_pairs: dict[str, str | None] = {
+            sid: t.youtube_url
             for t in manifest.tracks
             if t.youtube_url
+            for sid in [parse_spotify_url(t.spotify_url)[1]]
+            if sid is not None
         }
         if yt_pairs:
-            opts["youtube_link_map"] = yt_pairs
+            opts = replace(opts, youtube_link_map=yt_pairs)
         youtube_links = None       # disable per-track CLI path
     else:
         urls = args.urls
         youtube_links = args.youtube_links
         if youtube_links:
-            opts["youtube_link_map"] = {
-                parse_spotify_url(url)[1]: (yt if yt != YOUTUBE_LINK_SKIP else None)
+            opts = replace(opts, youtube_link_map={
+                sid: (yt if yt != YOUTUBE_LINK_SKIP else None)
                 for url, yt in zip(urls, youtube_links)
-            }
+                for sid in [parse_spotify_url(url)[1]]
+                if sid is not None
+            })
 
-    # ── Partition & dispatch (unchanged) ──────────────────────────────────
+    # ── Partition & dispatch ──────────────────────────────────────────────
     track_urls: list[str] = []
     collection_urls: list[str] = []
     for url in urls:
@@ -241,8 +252,10 @@ def _dispatch_download(args: argparse.Namespace) -> None:
             run_download(track_urls, opts)
         elif youtube_links:
             for url, yt in zip(track_urls, youtube_links):
-                opts_single = dict(opts)
-                opts_single["youtube_link"] = yt if yt != YOUTUBE_LINK_SKIP else None
+                opts_single = replace(
+                    opts,
+                    youtube_link=yt if yt != YOUTUBE_LINK_SKIP else None,
+                )
                 run_download(url, opts_single)
         else:
             for url in track_urls:

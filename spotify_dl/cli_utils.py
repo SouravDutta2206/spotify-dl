@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from typing import Any
 
-from spotify_dl.config import VALID_QUALITIES, ConfigManager
-from spotify_dl.models import AppConfig
+from spotify_dl.config import VALID_BROWSERS, VALID_QUALITIES, ConfigManager
+from spotify_dl.models import AppConfig, DownloadOptions
 from spotify_dl.spotify import SpotifyClient
 
 _DOWNLOAD_DEFAULTS: dict[str, Any] = {
@@ -20,32 +21,39 @@ def normalize_download_options(
     options: dict[str, Any],
     *,
     force_skip_existing: bool | None = None,
-) -> dict[str, Any]:
-    normalized = {**_DOWNLOAD_DEFAULTS, **{key: value for key, value in options.items() if value is not None}}
+) -> DownloadOptions:
+    merged = {**_DOWNLOAD_DEFAULTS, **{k: v for k, v in options.items() if v is not None}}
     if force_skip_existing is not None:
-        normalized["skip_existing"] = force_skip_existing
-    return normalized
+        merged["skip_existing"] = force_skip_existing
+    # Build a DownloadOptions from merged, only picking known fields
+    known = {f.name for f in dataclasses.fields(DownloadOptions)}
+    return DownloadOptions(**{k: v for k, v in merged.items() if k in known})
 
 
 def config_from_options(
-    options: dict[str, Any],
+    options: dict[str, Any] | DownloadOptions,
     manager: ConfigManager | None = None,
 ) -> tuple[AppConfig, ConfigManager]:
+    # Normalize to dict for field access
+    if isinstance(options, DownloadOptions):
+        opts = {f.name: getattr(options, f.name) for f in dataclasses.fields(options)}
+    else:
+        opts = options
     mgr = manager or ConfigManager()
     config = mgr.load(
-        client_id=options.get("client_id"),
-        client_secret=options.get("client_secret"),
-        output_directory=options.get("output") or options.get("output_directory"),
-        quality=options.get("quality"),
-        youtube_cookie_browser=options.get("youtube_cookies_from") or options.get("youtube_cookie_browser"),
-        youtube_cookie_file=options.get("youtube_cookie_file"),
-        concurrency=options.get("concurrency"),
+        client_id=opts.get("client_id"),
+        client_secret=opts.get("client_secret"),
+        output_directory=opts.get("output") or opts.get("output_directory"),
+        quality=opts.get("quality"),
+        youtube_cookie_browser=opts.get("youtube_cookies_from") or opts.get("youtube_cookie_browser"),
+        youtube_cookie_file=opts.get("youtube_cookie_file"),
+        concurrency=opts.get("concurrency"),
     )
     return config, mgr
 
 
 def spotify_client_from_options(
-    options: dict[str, Any],
+    options: dict[str, Any] | DownloadOptions,
     manager: ConfigManager | None = None,
 ) -> tuple[AppConfig, SpotifyClient]:
     config, mgr = config_from_options(options, manager)
@@ -142,7 +150,7 @@ def add_shared_options(parser: argparse.ArgumentParser) -> None:
     cookie_src.add_argument(
         "--youtube-cookies-from",
         metavar="BROWSER",
-        choices=["brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"],
+        choices=sorted(VALID_BROWSERS),
         help="Extract YouTube cookies directly from a browser.",
     )
     cookie_src.add_argument(

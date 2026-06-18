@@ -91,3 +91,26 @@ class ManifestTrack:
 class DownloadManifest:
     tracks: list[ManifestTrack]
     collections: list[str]
+
+
+@dataclass(slots=True)
+class DownloadOptions:
+    """Typed replacement for the untyped dict option-bags used throughout the pipeline."""
+    skip_existing: bool = True
+    dry_run: bool = False
+    verbose: bool = False
+    make_playlist: bool = False
+    youtube_link: str | None = None
+    youtube_link_map: dict[str, str | None] | None = None
+    # Pass-through fields from CLI / config
+    output: str | None = None
+    quality: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    concurrency: int | None = None
+    youtube_cookies_from: str | None = None
+    youtube_cookie_browser: str | None = None
+    youtube_cookie_file: str | None = None
+    auth_port: int | None = None
+    from_file: str | None = None
+

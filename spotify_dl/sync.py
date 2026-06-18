@@ -6,7 +6,7 @@ from spotify_dl.pipeline import DownloadPipeline
 from spotify_dl.exceptions import SpotifyDlError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.logging import get_logger
-from spotify_dl.models import AppConfig, TrackMetadata
+from spotify_dl.models import AppConfig, DownloadOptions, TrackMetadata
 from spotify_dl.source_cache import deserialize_tracks
 from spotify_dl.spotify import SpotifyClient
 from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
@@ -37,7 +37,7 @@ def run_sync(options: dict) -> None:
         print("No cached playlists found.")
         return
     filesystem = FileSystem(config.output_directory)
-    make_playlist = bool(download_options.get("make_playlist"))
+    make_playlist = download_options.make_playlist
 
     logger.info("Syncing %d cached playlist(s)", len(cached_playlists))
     print(f"\nSyncing {len(cached_playlists)} cached playlist(s)...\n")
@@ -58,7 +58,7 @@ def _sync_playlist(
     config: AppConfig,
     spotify: SpotifyClient,
     filesystem: FileSystem,
-    download_options: dict,
+    download_options: DownloadOptions,
     make_playlist: bool,
 ) -> None:
     payload = spotify.source_cache.read_collection("playlist", playlist_id)

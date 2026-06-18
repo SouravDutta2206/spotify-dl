@@ -8,12 +8,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from spotify_dl.cli_utils import normalize_download_options, spotify_client_from_options
+from spotify_dl.cli_utils import spotify_client_from_options
 from spotify_dl.cover_art import CoverResolver
 from spotify_dl.exceptions import SpotifyError
 from spotify_dl.filesystem import FileSystem
 from spotify_dl.logging import get_logger
-from spotify_dl.models import AppConfig, DownloadResult, TrackMetadata, YouTubeMatch
+from spotify_dl.models import AppConfig, DownloadOptions, DownloadResult, TrackMetadata, YouTubeMatch
 from spotify_dl.source_cache import CoverCache, SourceCache
 from spotify_dl.spotify import parse_spotify_url
 from spotify_dl.tagger import Tagger
@@ -31,21 +31,21 @@ class DownloadPipeline:
     def __init__(
         self,
         config: AppConfig,
-        options: dict,
+        options: DownloadOptions,
         *,
         cover_cache: CoverCache | None = None,
         source_cache: SourceCache | None = None,
     ) -> None:
         self.config = config
         self.options = options
-        self.skip_existing = bool(options["skip_existing"])
-        self.dry_run = bool(options["dry_run"])
-        self.youtube_link = options.get("youtube_link")
-        self.youtube_link_map = options.get("youtube_link_map") or {}
+        self.skip_existing = options.skip_existing
+        self.dry_run = options.dry_run
+        self.youtube_link = options.youtube_link
+        self.youtube_link_map = options.youtube_link_map or {}
         self.source_cache = source_cache
         self.filesystem = FileSystem(config.output_directory)
-        self.searcher = YouTubeSearcher(config=config, verbose=bool(options["verbose"]))
-        self.downloader = Downloader(config, verbose=bool(options["verbose"]))
+        self.searcher = YouTubeSearcher(config=config, verbose=options.verbose)
+        self.downloader = Downloader(config, verbose=options.verbose)
         self.tagger = Tagger(cover_cache=cover_cache)
         self.playlist_name: str | None = None
 
@@ -78,7 +78,7 @@ class DownloadPipeline:
         logger.info("%s: %s — %d track(s)", source_type.title(), source_name, len(tracks))
         print(f"\n  {source_type.title()}: {source_name}")
         print(f"  Tracks: {len(tracks)}\n")
-        make_playlist = self.options.get("make_playlist", False)
+        make_playlist = self.options.make_playlist
         self.playlist_name = source_name if make_playlist and source_type == "playlist" else None
 
         results = self._process_tracks(source_type=source_type, tracks=tracks)
@@ -260,21 +260,19 @@ class DownloadPipeline:
 # ---------------------------------------------------------------------------
 
 
-def run_download(urls: str | list[str], options: dict) -> None:
+def run_download(urls: str | list[str], options: DownloadOptions) -> None:
     """Resolve Spotify URL(s) and download all tracks."""
-    download_options = normalize_download_options(options)
-    config, spotify = spotify_client_from_options(download_options)
-    youtube_link = download_options.get("youtube_link")
+    config, spotify = spotify_client_from_options(options)
     pipeline = DownloadPipeline(
         config,
-        download_options,
+        options,
         cover_cache=spotify.cover_cache,
         source_cache=spotify.source_cache,
     )
 
     url_desc = f"{len(urls)} URL(s)" if isinstance(urls, list) else urls
     logger.info("run_download: %s, skip_existing=%s, quality=%s",
-                url_desc, download_options.get("skip_existing"), config.audio_quality)
+                url_desc, options.skip_existing, config.audio_quality)
 
     if isinstance(urls, list):
         # Batch track resolution
@@ -297,7 +295,7 @@ def run_download(urls: str | list[str], options: dict) -> None:
         source_name = f"Batch Download ({len(tracks)} tracks)"
         pipeline.persist_youtube_links(
             tracks,
-            youtube_link_map=download_options.get("youtube_link_map") or {},
+            youtube_link_map=options.youtube_link_map or {},
         )
     else:
         # Single URL resolution
@@ -305,8 +303,8 @@ def run_download(urls: str | list[str], options: dict) -> None:
         if source_type == "track" and tracks:
             pipeline.persist_youtube_links(
                 tracks,
-                youtube_link=youtube_link,
-                youtube_link_map=download_options.get("youtube_link_map") or {},
+                youtube_link=options.youtube_link,
+                youtube_link_map=options.youtube_link_map or {},
             )
 
     if len(tracks) > 1:

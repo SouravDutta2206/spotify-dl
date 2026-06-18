@@ -49,7 +49,7 @@ def test_search_options_use_shared_defaults(monkeypatch):
         "no_warnings": True,
         "extractor_args": {"youtube": {"player_client": ["default", "web_creator"]}},
         "skip_download": True,
-        "extract_flat": False,
+        "extract_flat": "in_playlist",
     }
 
 

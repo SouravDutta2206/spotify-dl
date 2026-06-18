@@ -121,8 +121,12 @@ class ConfigManager:
                 "Get your credentials at: https://developer.spotify.com/dashboard"
             )
 
-        logger.debug("Resolved output directory: %s",
-                     Path(output_directory).expanduser() if output_directory else Path(raw['output']['directory']).expanduser())
+        resolved_output_dir = (
+            Path(output_directory).expanduser()
+            if output_directory
+            else Path(raw["output"]["directory"]).expanduser()
+        )
+        logger.debug("Resolved output directory: %s", resolved_output_dir)
 
         resolved_quality = str(quality or raw["output"]["quality"])
         if resolved_quality not in VALID_QUALITIES:
@@ -139,9 +143,7 @@ class ConfigManager:
             spotify_user_access_token=user_auth.get("access_token"),
             spotify_user_refresh_token=user_auth.get("refresh_token"),
             spotify_user_token_expiry=_parse_datetime(user_auth.get("token_expiry")),
-            output_directory=Path(output_directory).expanduser()
-            if output_directory
-            else Path(raw["output"]["directory"]).expanduser(),
+            output_directory=resolved_output_dir,
             audio_quality=resolved_quality,
             youtube_cookie_browser=browser,
             youtube_cookie_file=_expand_path(str(cookie_file)) if cookie_file else None,

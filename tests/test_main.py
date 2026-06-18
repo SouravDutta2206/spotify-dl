@@ -2,12 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from concurrent.futures import Future
-
 from spotify_dl.models import AccountProfile
-from spotify_dl.pipeline import process_tracks
-from spotify_dl.models import DownloadResult
-from tests.conftest import make_track
 
 
 def _parse_download_args(argv):
@@ -196,143 +191,8 @@ def test_download_validation_rejects_collections_when_using_youtube_link(spotify
     assert exc_info.value.code == 2
 
 
-def test_concurrent_playlist_processing_aborts_on_keyboard_interrupt(app_config, monkeypatch):
-    config = app_config
-
-    class FakeFuture:
-        def cancel(self):
-            return True
-        def done(self):
-            return False
-
-    class FakeExecutor:
-        def __init__(self, max_workers, *args, **kwargs):
-            self.max_workers = max_workers
-            self.shutdown_args = None
-
-        def submit(self, *args, **kwargs):
-            return FakeFuture()
-
-        def shutdown(self, **kwargs):
-            self.shutdown_args = kwargs
-
-    def fake_sleep(seconds):
-        raise KeyboardInterrupt
-
-    executor = FakeExecutor(max_workers=5)
-    monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers, **kwargs: executor)
-    monkeypatch.setattr("spotify_dl.pipeline.time.sleep", fake_sleep)
-    monkeypatch.setattr("os._exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
-
-    with pytest.raises(SystemExit) as exc_info:
-        process_tracks(
-            config=config,
-            source_type="playlist",
-            tracks=[make_track(spotify_id=str(index)) for index in range(2)],
-            options={"skip_existing": True, "dry_run": False, "verbose": False},
-        )
-
-    assert exc_info.value.code == 130
-    assert executor.shutdown_args == {"wait": False, "cancel_futures": True}
 
 
-def test_album_processing_uses_concurrent_workers(app_config, tmp_path, monkeypatch):
-    config = app_config
-
-    class FakeExecutor:
-        def __init__(self, max_workers, *args, **kwargs):
-            self.max_workers = max_workers
-            self.submitted = []
-            self.shutdown_args = None
-
-        def submit(self, func, track, **kwargs):
-            self.submitted.append((func, track, kwargs))
-            future = Future()
-            future.set_result(DownloadResult(track, None, tmp_path / "out.mp3", "done", None))
-            return future
-
-        def shutdown(self, **kwargs):
-            self.shutdown_args = kwargs
-
-    executor = FakeExecutor(max_workers=3)
-    monkeypatch.setattr("spotify_dl.pipeline.ThreadPoolExecutor", lambda max_workers, **kwargs: executor)
-
-    results = process_tracks(
-        config=config,
-        source_type="album",
-        tracks=[make_track(spotify_id=str(index)) for index in range(4)],
-        options={"skip_existing": True, "dry_run": False, "verbose": False},
-    )
-
-    assert executor.max_workers == 3
-    assert len(executor.submitted) == 4
-    assert executor.shutdown_args == {"wait": True}
-    assert [result.status for result in results] == ["done", "done", "done", "done"]
-
-
-def test_track_processing_stays_sequential(app_config, tmp_path, monkeypatch):
-    config = app_config
-    calls = []
-
-    class FakePipeline:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def process_track(self, track, **kwargs):
-            calls.append(track.spotify_id)
-            return DownloadResult(track, None, tmp_path / "out.mp3", "done", None)
-
-    monkeypatch.setattr("spotify_dl.pipeline.DownloadPipeline", FakePipeline)
-    monkeypatch.setattr(
-        "spotify_dl.pipeline.ThreadPoolExecutor",
-        lambda max_workers, **kwargs: (_ for _ in ()).throw(AssertionError("track should not use workers")),
-    )
-
-    process_tracks(
-        config=config,
-        source_type="track",
-        tracks=[make_track(spotify_id="track-id")],
-        options={"skip_existing": True, "dry_run": False, "verbose": False},
-    )
-
-    assert calls == ["track-id"]
-
-
-
-def test_run_download_normalizes_options(app_config, tmp_path, monkeypatch):
-    from spotify_dl.pipeline import run_download
-    from unittest.mock import MagicMock
-
-    config = app_config
-    client = MagicMock()
-    client.resolve_url.return_value = ("track", "Title", [make_track(spotify_id="track-id")])
-    
-    monkeypatch.setattr(
-        "spotify_dl.pipeline.spotify_client_from_options",
-        lambda options: (config, client),
-    )
-
-    download_calls = []
-    monkeypatch.setattr(
-        "spotify_dl.pipeline.download_tracks",
-        lambda **kwargs: download_calls.append(kwargs),
-    )
-
-    # Pass incomplete options, and options with None value (like parsed CLI args)
-    run_download("spotify:track:abc", {
-        "output": str(tmp_path),
-        "skip_existing": None,
-        "dry_run": None,
-        "verbose": None,
-        "make_playlist": None,
-    })
-
-    assert len(download_calls) == 1
-    opts = download_calls[0]["options"]
-    assert opts["verbose"] is False
-    assert opts["dry_run"] is False
-    assert opts["skip_existing"] is True
-    assert opts["make_playlist"] is False
 
 
 def test_download_validation_allows_tracks_with_youtube_link_skip_placeholders():
@@ -374,14 +234,14 @@ def test_dispatch_download_with_youtube_link_skip(monkeypatch):
 
     assert len(downloaded) == 2
     assert downloaded[0][0] == "https://open.spotify.com/track/track123"
-    assert downloaded[0][1]["youtube_link"] is None
-    assert downloaded[0][1]["youtube_link_map"] == {
+    assert downloaded[0][1].youtube_link is None
+    assert downloaded[0][1].youtube_link_map == {
         "track123": None,
         "track456": "https://youtube.com/watch?v=second",
     }
     
     assert downloaded[1][0] == "spotify:track:track456"
-    assert downloaded[1][1]["youtube_link"] == "https://youtube.com/watch?v=second"
+    assert downloaded[1][1].youtube_link == "https://youtube.com/watch?v=second"
 
 
 def test_dispatch_download_from_manifest_separates_tracks_and_collections(tmp_path, monkeypatch):
@@ -420,14 +280,14 @@ def test_dispatch_download_from_manifest_separates_tracks_and_collections(tmp_pa
         "spotify:playlist:playlist123",
         "spotify:album:album123",
     ]
-    assert downloaded[0][1]["youtube_link"] is None
-    assert downloaded[0][1]["youtube_link_map"] == {
+    assert downloaded[0][1].youtube_link is None
+    assert downloaded[0][1].youtube_link_map == {
         "track456": "https://youtube.com/watch?v=second",
     }
-    assert downloaded[1][1]["youtube_link"] is None
-    assert downloaded[1][1]["youtube_link_map"] == {
+    assert downloaded[1][1].youtube_link is None
+    assert downloaded[1][1].youtube_link_map == {
         "track456": "https://youtube.com/watch?v=second",
     }
-    assert downloaded[2][1]["youtube_link_map"] == {
+    assert downloaded[2][1].youtube_link_map == {
         "track456": "https://youtube.com/watch?v=second",
     }

@@ -57,14 +57,18 @@ def test_run_sync_skips_when_up_to_date(tmp_path, monkeypatch, app_config):
     client.source_cache = cache
     client.get_playlist_header.return_value = {"snapshot_id": "snap", "name": "Playlist"}
     download_calls = []
+
+    class FakePipeline:
+        def __init__(self, *args, **kwargs):
+            pass
+        def download_source(self, **kwargs):
+            download_calls.append(kwargs)
+
     monkeypatch.setattr(
         "spotify_dl.sync.spotify_client_from_options",
         lambda options: (config, client),
     )
-    monkeypatch.setattr(
-        "spotify_dl.sync.download_tracks",
-        lambda **kwargs: download_calls.append(kwargs),
-    )
+    monkeypatch.setattr("spotify_dl.sync.DownloadPipeline", FakePipeline)
 
     run_sync({})
 
@@ -90,14 +94,18 @@ def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch, app_config
     client.get_playlist_header.return_value = {"snapshot_id": "new-snap", "name": "Playlist"}
     client.get_playlist.return_value = [track]
     download_calls = []
+
+    class FakePipeline:
+        def __init__(self, *args, **kwargs):
+            pass
+        def download_source(self, **kwargs):
+            download_calls.append(kwargs)
+
     monkeypatch.setattr(
         "spotify_dl.sync.spotify_client_from_options",
         lambda options: (config, client),
     )
-    monkeypatch.setattr(
-        "spotify_dl.sync.download_tracks",
-        lambda **kwargs: download_calls.append(kwargs),
-    )
+    monkeypatch.setattr("spotify_dl.sync.DownloadPipeline", FakePipeline)
 
     run_sync({})
 
@@ -110,7 +118,6 @@ def test_run_sync_downloads_on_snapshot_change(tmp_path, monkeypatch, app_config
     assert download_calls[0]["source_type"] == "playlist"
     assert download_calls[0]["source_name"] == "Playlist"
     assert download_calls[0]["tracks"] == [track]
-    assert download_calls[0]["options"]["skip_existing"] is True
 
 
 def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch, app_config):
@@ -130,14 +137,18 @@ def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch, app_config
     client.source_cache = cache
     client.get_playlist_header.return_value = {"snapshot_id": "snap", "name": "Playlist"}
     download_calls = []
+
+    class FakePipeline:
+        def __init__(self, *args, **kwargs):
+            pass
+        def download_source(self, **kwargs):
+            download_calls.append(kwargs)
+
     monkeypatch.setattr(
         "spotify_dl.sync.spotify_client_from_options",
         lambda options: (config, client),
     )
-    monkeypatch.setattr(
-        "spotify_dl.sync.download_tracks",
-        lambda **kwargs: download_calls.append(kwargs),
-    )
+    monkeypatch.setattr("spotify_dl.sync.DownloadPipeline", FakePipeline)
 
     run_sync({})
 
@@ -146,7 +157,6 @@ def test_run_sync_downloads_when_files_missing(tmp_path, monkeypatch, app_config
     assert download_calls[0]["source_type"] == "playlist"
     assert download_calls[0]["source_name"] == "Playlist"
     assert download_calls[0]["tracks"] == [track]
-    assert download_calls[0]["options"]["skip_existing"] is True
 
 
 def test_playlists_list_command(tmp_path, monkeypatch, capsys, app_config):

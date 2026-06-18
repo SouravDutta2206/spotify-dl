@@ -859,7 +859,7 @@ requires-dist = [
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "spotipy", specifier = ">=2.23" },
-    { name = "yt-dlp", extras = ["default"], specifier = ">=2026.3.17" },
+    { name = "yt-dlp", extras = ["default"], specifier = "==2026.3.17" },
     { name = "yt-dlp-ejs", specifier = ">=0.8.0" },
 ]
 provides-extras = ["dev"]
